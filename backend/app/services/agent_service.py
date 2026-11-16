@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Conflict, NotFound, PaymentRejected
 from app.db.models import Agent, AgentPayment, Call, CallLink, User
 from app.services import audit_service, profile_service
+from app.services.collections_prompt import build_collections_prompt, opening_line
 
 PRICE = Decimal("100")
 PENDING_TTL = timedelta(hours=24)
@@ -15,20 +16,16 @@ BUSY_WINDOW = timedelta(minutes=30)  # an unended call older than this is treate
 
 
 def agent_prompt(name: str, role_behavior: str) -> str:
-    return (
-        f"You are {name}, a voice assistant on a phone-style call.\n\n"
-        f"Your role and behaviour, as defined by your owner:\n{role_behavior}\n\n"
-        "Keep replies short and natural for speech. Only state facts you were given; "
-        "if you do not know something, say so."
-    )
+    """Every agent is a loan-collection agent; the owner's role text adds lender-specific guidance."""
+    return build_collections_prompt(name, None, role_behavior)
 
 
 def agent_fields(name: str, role_behavior: str) -> dict[str, object]:
     return {
         "agent_name": name,
         "role_summary": role_behavior[:300],
-        "conversation_flow": {"opening": f"Hi, this is {name}. How can I help?"},
-        "escalation_rules": "",
+        "conversation_flow": {"opening": opening_line(name, None)},
+        "escalation_rules": "Offer a callback from the lender's team for anything you cannot answer.",
         "call_ending_conditions": [],
         "assumptions_made": [],
     }

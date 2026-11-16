@@ -8,11 +8,21 @@ from livekit.agents.voice.turn import TurnHandlingOptions
 from voice_agent.config import AgentSettings
 from voice_agent.profile.prompt_composer import RuntimeContext, compose_instructions
 from voice_agent.profile.schema import AgentProfileSpec
+from voice_agent.providers.live import build_realtime_model
 from voice_agent.providers.llm import build_llm
 from voice_agent.providers.stt import build_stt
 from voice_agent.providers.tts import build_tts
 from voice_agent.providers.turn_detection import build_turn_detection
 from voice_agent.session_profiles import LATENCY_PROFILES
+
+
+def build_realtime_turn_handling(profile: AgentProfileSpec) -> TurnHandlingOptions:
+    """Gemini Live detects the end of the caller's turn itself, so there is no endpointing to tune."""
+    itr = profile.voice_behavior.interruption
+    return TurnHandlingOptions(
+        turn_detection="realtime_llm",
+        interruption={"enabled": itr.enabled, "min_duration": itr.min_duration_s},
+    )
 
 
 def build_turn_handling(profile: AgentProfileSpec, settings: AgentSettings, turn_detection: Any) -> TurnHandlingOptions:
@@ -36,6 +46,10 @@ def build_session(
     kwargs: dict[str, Any] = {}
     if userdata is not None:
         kwargs["userdata"] = userdata
+    if settings.agent_voice_mode == "realtime":
+        return AgentSession(
+            vad=vad, llm=build_realtime_model(settings), turn_handling=build_realtime_turn_handling(profile), **kwargs
+        )
     return AgentSession(
         vad=vad,
         stt=build_stt(settings),
@@ -48,3 +62,13 @@ def build_session(
 
 def build_agent(profile: AgentProfileSpec, runtime: RuntimeContext, tools: list[Any]) -> Agent:
     return Agent(instructions=compose_instructions(profile, runtime), tools=tools)
+
+
+def speak(session: AgentSession, text: str, *, interruptible: bool = True) -> None:
+    """Says `text`. A realtime session has no TTS, so the model is asked to say it in its own voice instead."""
+    if session.tts is not None:
+        session.say(text, allow_interruptions=interruptible)
+    else:
+        session.generate_reply(
+            instructions=f'Say this to the caller now, naturally and without adding anything: "{text}"'
+        )

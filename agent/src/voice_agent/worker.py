@@ -19,7 +19,7 @@ from voice_agent.profile.prompt_composer import RuntimeContext
 from voice_agent.profile.schema import AgentProfileSpec
 from voice_agent.providers.noise import noise_selector
 from voice_agent.providers.vad import load_vad
-from voice_agent.session_factory import build_agent, build_session
+from voice_agent.session_factory import build_agent, build_session, speak
 from voice_agent.tools.base import CallState, ToolContext
 from voice_agent.tools.registry import build_tools
 
@@ -94,11 +94,11 @@ async def entrypoint(ctx: JobContext) -> None:
         log.error("unrecoverable session error", extra=info)
         lines = profile.voice_behavior.fallback_lines
         if unrecoverable >= MAX_CONSECUTIVE_FAILURES:
-            session.say(lines["technical_difficulty"], allow_interruptions=False)
+            speak(session, lines["technical_difficulty"], interruptible=False)
             state.end_reason = state.end_reason or "provider_failure"
             session.shutdown(drain=True)
         else:
-            session.say(lines.get("temporary_issue", lines["not_understood"]))
+            speak(session, lines.get("temporary_issue", lines["not_understood"]))
 
     @session.on("user_input_transcribed")
     def _on_user_text(ev: object) -> None:
@@ -162,7 +162,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     greeting = profile.voice_behavior.greeting.strip()
     if greeting:
-        session.say(greeting)
+        speak(session, greeting)
     else:
         session.generate_reply(instructions="Greet the caller briefly according to your role.")
 

@@ -31,6 +31,13 @@ class AgentSettings(BaseSettings):
     agent_llm_fallback_models: str = ""
     llm_temperature: float = 0.3
 
+    # "realtime": one Gemini Live speech-to-speech session (no STT -> LLM -> TTS hops): the fastest option.
+    # "pipeline": Deepgram STT -> Gemini text model -> Deepgram TTS, kept as a fallback.
+    agent_voice_mode: Literal["realtime", "pipeline"] = "realtime"
+    live_model: str = "gemini-3.8-live"
+    live_voice: str = "Aoede"
+    live_language: str = ""  # BCP-47 code; empty lets the model follow the caller's language
+
     deepgram_api_key: str
     stt_provider: Literal["deepgram"] = "deepgram"
     tts_provider: Literal["deepgram"] = "deepgram"

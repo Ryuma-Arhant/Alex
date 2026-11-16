@@ -39,3 +39,16 @@ async def test_second_profile_builds_real_session_and_agent():
     assert isinstance(session, AgentSession)
     agent = build_agent(REMINDER, RuntimeContext("OUTBOUND", "now"), build_tools([], ToolContext(state, None)))
     assert "Remind the patient" in agent.instructions
+
+
+async def test_realtime_mode_builds_a_gemini_live_session_without_stt_or_tts():
+    s = get_settings().model_copy(update={"agent_voice_mode": "realtime"})
+    session = build_session(REMINDER, s, vad=None, userdata=CallState("c", "k"))
+    assert type(session.llm).__name__ == "RealtimeModel" and session.llm.model == s.live_model
+    assert session.stt is None and session.tts is None
+
+
+async def test_pipeline_mode_is_still_available():
+    s = get_settings().model_copy(update={"agent_voice_mode": "pipeline"})
+    session = build_session(REMINDER, s, vad=None, userdata=CallState("c", "k"))
+    assert session.stt is not None and session.tts is not None

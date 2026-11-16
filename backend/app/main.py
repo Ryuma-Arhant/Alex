@@ -10,7 +10,19 @@ from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram
 from slowapi.errors import RateLimitExceeded
 
-from app.api.v1 import agent_profiles, agents, auth, calls, health, internal, manager, screen_time, stats, users
+from app.api.v1 import (
+    agent_profiles,
+    agents,
+    auth,
+    calls,
+    collections,
+    health,
+    internal,
+    manager,
+    screen_time,
+    stats,
+    users,
+)
 from app.core.config import get_settings
 from app.core.correlation import correlation_id_var, new_correlation_id
 from app.core.errors import install_error_handlers
@@ -81,6 +93,7 @@ def create_app() -> FastAPI:
         agents.router,
         manager.router,
         stats.router,
+        collections.router,
         screen_time.router,
     ):
         api_v1.include_router(r)
