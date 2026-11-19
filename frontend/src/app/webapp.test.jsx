@@ -5,20 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { makeStore } from './store'
 import { routes } from './router'
 
-vi.mock('../features/call/CallProvider', () => ({
-    CallProvider: ({ children }) => children,
-    useCall: () => ({
-        manager: { getLevels: () => ({ user: 0, agent: 0 }) },
-        start: vi.fn(),
-        end: vi.fn(),
-        setMuted: vi.fn(),
-    }),
-}))
 vi.mock('../pages/Landing', () => ({ default: () => <div data-testid="landing" /> }))
-vi.mock('../components/Sphere/Sphere', () => ({
-    default: () => <div data-testid="sphere" />,
-    sphereMode: () => 'idle',
-}))
 
 const ME = { uid: 'u1', username: 'Ann', email: 'ann@example.com', avatar_url: null, agent_count: 1 }
 const json = (b, status = 200) =>
@@ -72,7 +59,7 @@ describe('route guard', () => {
 
     it('a protected page without a token goes to /checkin', async () => {
         mockApi({ ...signedOut, 'GET /auth/config': () => json({ google: false }) })
-        const router = renderAt('/agents/u1')
+        const router = renderAt('/agent/u1')
         await waitFor(() => expect(router.state.location.pathname).toBe('/checkin'))
     })
 
@@ -83,194 +70,81 @@ describe('route guard', () => {
     })
 })
 
+const DAYS = ['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed'].map((w, i) => ({
+    date: `2026-11-${String(12 + i).padStart(2, '0')}`,
+    weekday: w,
+    calls: [0, 2, 0, 1, 0, 3, 4][i],
+}))
+const callsPerDay = () => json({ tz: 'UTC', today: '2026-11-18', days: DAYS })
+
 describe('shared navbar', () => {
-    it.each(['dashboard', 'agents', 'manager', 'profile', 'settings'])(
+    it.each(['dashboard', 'agent', 'bulk-calling', 'profile', 'settings'])(
         '%s page has the five links in order',
         async (page) => {
             mockApi({
                 ...signedIn,
-                'GET /users/u1/agents': () => json([]),
-                'GET /users/u1/manager/calls': () => json([]),
-                'GET /agent-profiles/active': () => json({}, 404),
+                'GET /users/u1/agent': () => json(null),
+                'GET /users/u1/stats/calls-per-day': callsPerDay,
             })
             renderAt(`/${page}/u1`)
             const nav = await screen.findByRole('navigation', { name: 'Main' })
             const links = Array.from(nav.querySelectorAll('a'))
             expect(links.map((a) => a.textContent)).toEqual([
-                'My Dashboard',
-                'My Agents',
-                'My Manager',
+                'Dashboard',
+                'Your Agent',
+                'Bulk Calling',
                 'My Profile',
                 'Settings',
             ])
             expect(links.map((a) => a.getAttribute('href'))).toEqual([
                 '/dashboard/u1',
-                '/agents/u1',
-                '/manager/u1',
+                '/agent/u1',
+                '/bulk-calling/u1',
                 '/profile/u1',
                 '/settings/u1',
             ])
         },
     )
+
+    it.each(['/agents/u1', '/manager/u1', '/create_agent/u1'])(
+        'the removed page %s is gone',
+        async (path) => {
+            mockApi(signedIn)
+            const router = renderAt(path)
+            await waitFor(() => expect(router.state.location.pathname).toBe('/home'))
+        },
+    )
 })
 
-describe('dashboard and agents', () => {
-    it('profile icon opens the profile page', async () => {
-        mockApi({ ...signedIn })
+describe('dashboard', () => {
+    it('greets the user and the profile icon opens the profile page', async () => {
+        mockApi({ ...signedIn, 'GET /users/u1/stats/calls-per-day': callsPerDay })
         const router = renderAt('/dashboard/u1')
+        expect(await screen.findByText('Welcome back, Ann!')).toBeInTheDocument()
         await userEvent.click(await screen.findByRole('button', { name: /open your profile/i }))
         expect(router.state.location.pathname).toBe('/profile/u1')
     })
 
-    it('lists agents with status and goes to create / update pages', async () => {
-        mockApi({
-            ...signedIn,
-            'GET /users/u1/agents': () =>
-                json([
-                    { aid: 'a1', name: 'Ava', role_behavior: 'x', status: 'free', lifecycle: 'ACTIVE' },
-                    { aid: 'a2', name: 'Ben', role_behavior: 'y', status: 'busy', lifecycle: 'ACTIVE' },
-                ]),
-        })
-        const router = renderAt('/agents/u1')
-        expect(await screen.findByText('Ann’s agents')).toBeInTheDocument()
-        expect(await screen.findByText('Ava')).toBeInTheDocument()
-        expect(
-            screen.getAllByRole('img', { name: /free|busy/i }).map((e) => e.getAttribute('aria-label')),
-        ).toEqual(['Free', 'Busy'])
-        await userEvent.click(screen.getByRole('button', { name: 'Edit Ben' }))
-        expect(router.state.location.pathname).toBe('/agents/u1/update/a2')
-        router.navigate('/agents/u1')
-        await userEvent.click(await screen.findByRole('button', { name: /create new agent/i }))
-        expect(router.state.location.pathname).toBe('/create_agent/u1')
-    })
-
-    it('create agent -> payment of 100 -> back to the agents list', async () => {
-        let paid = null
-        mockApi({
-            ...signedIn,
-            'POST /users/u1/agents': () => json({ aid: 'a9', name: 'Zed', lifecycle: 'PENDING' }, 201),
-            'POST /users/u1/agents/a9/payment': async (req) => {
-                paid = await req.json()
-                return json({ aid: 'a9', name: 'Zed', lifecycle: 'ACTIVE' })
-            },
-            'GET /users/u1/agents': () => json([]),
-        })
-        const router = renderAt('/create_agent/u1')
-        await userEvent.type(await screen.findByLabelText(/agent’s name/i), 'Zed')
-        await userEvent.type(
-            screen.getByLabelText(/role and behaviour/i),
-            'Answers support questions politely',
+    it('shows one graph: calls per day for the last seven days, by weekday', async () => {
+        const calls = mockApi({ ...signedIn, 'GET /users/u1/stats/calls-per-day': callsPerDay })
+        renderAt('/dashboard/u1')
+        const chart = await screen.findByRole('img', { name: /number of calls made by your agent per day/i })
+        expect(chart).toHaveAccessibleName(
+            expect.stringContaining('Thu 0, Fri 2, Sat 0, Sun 1, Mon 0, Tue 3, Wed 4'),
         )
-        await userEvent.click(screen.getByRole('button', { name: 'Create agent' }))
-        await waitFor(() => expect(router.state.location.pathname).toBe('/create_agent/u1/a9'))
-        await userEvent.type(await screen.findByLabelText('Enter amount'), '100')
-        await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
-        await waitFor(() => expect(router.state.location.pathname).toBe('/agents/u1'))
-        expect(paid).toEqual({ amount: '100' })
-    })
-
-    it('shows the error and stays on the payment page when the amount is wrong', async () => {
-        mockApi({
-            ...signedIn,
-            'POST /users/u1/agents/a9/payment': () =>
-                json(
-                    {
-                        error: {
-                            code: 'payment_rejected',
-                            message: 'Payment failed: please enter the exact amount (100).',
-                        },
-                    },
-                    402,
-                ),
-        })
-        const router = renderAt('/create_agent/u1/a9')
-        await userEvent.type(await screen.findByLabelText('Enter amount'), '5')
-        await userEvent.click(screen.getByRole('button', { name: 'Pay' }))
-        expect(await screen.findByRole('alert')).toHaveTextContent(/exact amount/i)
-        expect(router.state.location.pathname).toBe('/create_agent/u1/a9')
-    })
-
-    it('update page is prefilled and Save returns to the list', async () => {
-        let saved = null
-        mockApi({
-            ...signedIn,
-            'GET /users/u1/agents/a1': () =>
-                json({
-                    aid: 'a1',
-                    name: 'Ava',
-                    role_behavior: 'Books appointments',
-                    status: 'free',
-                    lifecycle: 'ACTIVE',
-                }),
-            'PUT /users/u1/agents/a1': async (req) => {
-                saved = await req.json()
-                return json({
-                    aid: 'a1',
-                    name: 'Ava 2',
-                    role_behavior: saved.role_behavior,
-                    status: 'free',
-                    lifecycle: 'ACTIVE',
-                })
-            },
-            'GET /users/u1/agents': () => json([]),
-        })
-        const router = renderAt('/agents/u1/update/a1')
-        const name = await screen.findByLabelText('Update Agent name')
-        await waitFor(() => expect(name).toHaveValue('Ava'))
-        expect(screen.getByLabelText(/update role and behaviour/i)).toHaveValue('Books appointments')
-        await userEvent.clear(name)
-        await userEvent.type(name, 'Ava 2')
-        await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
-        await waitFor(() => expect(router.state.location.pathname).toBe('/agents/u1'))
-        expect(saved.name).toBe('Ava 2')
+        expect(screen.getAllByRole('img', { name: /calls/i })).toHaveLength(1)
+        for (const w of ['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed'])
+            expect(screen.getByText(w)).toBeInTheDocument()
+        expect(screen.getByText('Day of the week')).toBeInTheDocument()
+        expect(screen.getByText('Number of calls')).toBeInTheDocument()
+        expect(screen.getByText(/10 calls/)).toBeInTheDocument()
+        expect(screen.queryByRole('combobox')).toBeNull() // no metric / period pickers any more
+        const req = calls.find((c) => c.key === 'GET /users/u1/stats/calls-per-day').req
+        expect(new URL(req.url).searchParams.get('tz')).toBeTruthy()
     })
 })
 
-describe('manager, profile, settings, checkin', () => {
-    it('manager page: calls bar highlights the open call and shows transcript + summary', async () => {
-        mockApi({
-            ...signedIn,
-            'GET /users/u1/manager/calls': () =>
-                json([
-                    {
-                        id: 'c1',
-                        title: 'Busy agents',
-                        status: 'COMPLETED',
-                        summary_status: 'READY',
-                        started_at: null,
-                    },
-                ]),
-            'GET /calls/c1': () =>
-                json({
-                    id: 'c1',
-                    title: 'Busy agents',
-                    summary_status: 'READY',
-                    turns: [{ seq: 0, speaker: 'agent', text: 'Ava is free', is_final: true }],
-                    summary: {
-                        title: 'Busy agents',
-                        summary: 'Asked who is busy.',
-                        call_outcome: 'completed',
-                        key_points: [],
-                        user_requests: [],
-                        agent_commitments_and_next_actions: [],
-                        unresolved_items: [],
-                        information_collected: {},
-                        sentiment: 'neutral',
-                        escalation_needed: false,
-                        escalation_reason: null,
-                        topics_outside_scope_raised: [],
-                        confidence_notes: '',
-                    },
-                }),
-        })
-        renderAt('/manager/u1')
-        const link = await screen.findByRole('link', { name: 'Busy agents' })
-        await userEvent.click(link)
-        expect(await screen.findByText('Ava is free')).toBeInTheDocument()
-        expect(await screen.findByRole('complementary', { name: /call summary/i })).toBeInTheDocument()
-        await waitFor(() => expect(screen.getByRole('link', { name: 'Busy agents' })).toHaveClass('active'))
-    })
-
+describe('profile, settings, checkin', () => {
     it('profile page shows the details and logout goes to /checkin', async () => {
         let authed = true
         mockApi({
@@ -308,7 +182,7 @@ describe('manager, profile, settings, checkin', () => {
                 authed = true
                 return json(ME)
             },
-            'GET /users/u1/agents': () => json([]),
+            'GET /users/u1/stats/calls-per-day': callsPerDay,
         })
         const router = renderAt('/checkin')
         expect(await screen.findByText('Continue with Google')).toHaveAttribute('aria-disabled', 'true')

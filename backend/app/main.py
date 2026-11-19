@@ -11,14 +11,14 @@ from prometheus_client import Counter, Histogram
 from slowapi.errors import RateLimitExceeded
 
 from app.api.v1 import (
+    agent,
     agent_profiles,
-    agents,
     auth,
+    bulk_calls,
     calls,
     collections,
     health,
     internal,
-    manager,
     screen_time,
     stats,
     users,
@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[settings.app_origin],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Content-Type", "X-Correlation-ID", "X-CSRF-Token"],
     )
 
@@ -90,10 +90,10 @@ def create_app() -> FastAPI:
         calls.router,
         auth.router,
         users.router,
-        agents.router,
-        manager.router,
+        agent.router,
         stats.router,
         collections.router,
+        bulk_calls.router,
         screen_time.router,
     ):
         api_v1.include_router(r)

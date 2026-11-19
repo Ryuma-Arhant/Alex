@@ -3,32 +3,28 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.errors import Conflict
 from app.db.models import Call, CallLink, User
 from app.schemas.collections import SoloCallIn
-from app.services import call_service, profile_service
-from app.services.collections_prompt import BorrowerDetails, build_collections_prompt, opening_line
-
-AGENT_NAME = "Maya"
+from app.services import agent_service, call_service, profile_service
+from app.services.collections_prompt import BorrowerDetails, build_recovery_prompt, opening_line
 
 
 def profile_fields(agent_name: str, borrower: BorrowerDetails | None) -> dict[str, object]:
     """What the worker reads from the profile: the spoken opening and the call-ending conditions."""
     return {
-        "agent_name": agent_name,
-        "role_summary": "Loan EMI payment reminder call",
+        **agent_service.agent_fields(agent_name),
+        "role_summary": "Loan recovery call",
         "conversation_flow": {"opening": opening_line(agent_name, borrower)},
-        "escalation_rules": "Offer a callback from the lender's team for anything you cannot answer.",
-        "call_ending_conditions": [
-            "A payment commitment or outcome has been recorded",
-            "The person asks to stop the call or not to be contacted",
-            "Wrong number or wrong person",
-        ],
-        "assumptions_made": [],
     }
 
 
 async def start_solo_call(s: AsyncSession, settings: Settings, user: User, body: SoloCallIn) -> tuple[Call, str]:
-    """One borrower, one call. The details live only in this call's own prompt snapshot (a profile nobody else uses)."""
+    """One borrower, one call, made by the user's agent. The borrower's details live only in this call's own prompt
+    snapshot (a profile nobody else uses); the call is linked to the agent so it shows as busy and is counted."""
+    agent = await agent_service.get_active(s, user.uid)
+    if agent is None:
+        raise Conflict("Create your agent before placing calls.")
     borrower = BorrowerDetails(
         name=body.borrower_name,
         phone=body.phone,
@@ -36,16 +32,21 @@ async def start_solo_call(s: AsyncSession, settings: Settings, user: User, body:
         bank=body.bank,
         currency=body.currency,
         due_date=body.due_date,
+        notes=body.context,
     )
     _, version = await profile_service.create_detached(
         s,
         user.workspace_id,
-        source="collections",
-        fields=profile_fields(AGENT_NAME, borrower),
-        prompt=build_collections_prompt(AGENT_NAME, borrower),
-        model="collections",
+        source="loan-recovery-call",
+        fields=profile_fields(agent.name, borrower),
+        prompt=build_recovery_prompt(agent.name, borrower),
+        model="loan-recovery",
     )
-    # Owned by the user, but neither a manager call nor an agent call, so it appears in neither list nor graph.
     return await call_service.create_web_call(
-        s, settings, user.workspace_id, None, version=version, link=CallLink(call_id=uuid.uuid4(), uid=user.uid)
+        s,
+        settings,
+        user.workspace_id,
+        None,
+        version=version,
+        link=CallLink(call_id=uuid.uuid4(), uid=user.uid, agent_aid=agent.aid),
     )

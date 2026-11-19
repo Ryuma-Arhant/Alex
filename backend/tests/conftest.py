@@ -26,10 +26,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1.agent_profiles import get_generator
+from app.core.config import Settings
 from app.db import models  # noqa: F401
 from app.db.base import Base
 from app.db.session import get_session
 from app.main import create_app
+
+# Tests use only the environment above, never a developer's backend/.env (which would leak real keys and names in).
+Settings.model_config["env_file"] = None
 
 FAKE_FIELDS: dict[str, Any] = {
     "agent_name": "Ava",

@@ -139,15 +139,35 @@ On macOS use `sed -i ''` instead of `sed -i`. Now continue with **Run** below.
 ## Test
 `make test` (backend + agent), `cd frontend && npm test -- --run`, `make lint`.
 
-## Web app: accounts, agents, manager
+## Web app
 
-Routes: `/home` (the landing page, `frontend/src/pages/Landing.jsx`; always shown; signed-in visitors see "Open app" in its nav, others use Sign in / Sign up which go to `/checkin`), `/checkin`, `/dashboard/:uid`,
-`/agents/:uid`, `/create_agent/:uid`, `/create_agent/:uid/:aid` (simulated payment, amount `100`), `/agents/:uid/update/:aid`,
-`/manager/:uid` (+ `/manager/:uid/chats/:id`), `/profile/:uid`, `/settings/:uid`.  The landing page's components and CSS live in `frontend/src/components/landing/` (taken from github.com/vishnu97770/Real-Time-Voice-Agent).
+Signed-in pages (every one shares the left navbar):
+
+| Route | Page | What it does |
+|---|---|---|
+| `/dashboard/:uid` | `Dashboard.jsx` | Greeting, profile icon, and one graph: calls made by your agent per day, last 7 days |
+| `/agent/:uid` | `YourAgent.jsx` | Your single Loan-Recovery Agent: create (name only), view its system prompt, rename, delete |
+| `/bulk-calling/:uid` | `BulkCalling.jsx` | Upload a CSV of people to call; every row is validated and previewed (no calls are placed yet) |
+| `/profile/:uid`, `/settings/:uid` | `ProfilePage.jsx`, `Settings.jsx` | Account details, picture, screen time, logout; theme and appearance |
+
+Public: `/home` (landing page, `frontend/src/components/landing/`) and `/checkin` (sign in / sign up).
+
+**One agent per user.** Every agent is a Loan-Recovery Agent with the same system prompt
+(`backend/app/services/collections_prompt.py::build_recovery_prompt`); only its name differs. Deleting an agent marks it
+`DELETED` (its past calls stay linked), after which a new one can be created. A partial unique index enforces at most one
+`ACTIVE` agent per user. The Manager and the simulated payment step were removed (migration `0004`).
+
+**Bulk Calling CSV.** Header row required. Columns (case and punctuation ignored; common aliases such as "Mobile Number",
+"Due Date", "Bank" are accepted): `name`, `phone` (with country code), `amount_due`, `deadline` are required;
+`lender`, `currency` (default INR), `loan_reference`, `notes` are optional. Dates are ISO (`2026-12-05`) or day-first
+(`05/12/2026`). Up to 1 MB / 1,000 rows. The page offers a sample file.
+
+API (all under `/api/v1`, cookie auth + `X-CSRF-Token` on writes): `GET|POST|PUT|DELETE /users/{uid}/agent`,
+`GET /users/{uid}/stats/calls-per-day?tz=`, `POST /users/{uid}/bulk-calls/preview` (raw CSV body).
 
 Auth: email + password (argon2) and Google. The session is an httpOnly JWT cookie plus a CSRF cookie echoed in `X-CSRF-Token`.
 Set `AUTH_JWT_SECRET` in `.env`. Google sign-in stays disabled until `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set; create a
-Web OAuth client in Google Cloud Console and add `http://localhost:5173/api/v1/auth/google/callback` as an authorised redirect URI.
+Web OAuth client in Google Cloud Console and add `${APP_ORIGIN}/api/v1/auth/google/callback` as an authorised redirect URI.
 
-Run order: `make infra`, `cd backend && uv run alembic upgrade head` (migration `0002` adds `users`, `agents`, `managers`,
-`agent_payments`, `call_links`; existing tables are untouched), then backend, agent and frontend as above.
+Run order: `make infra`, `cd backend && uv run alembic upgrade head` (migrations `0001`–`0004`), then backend, agent and
+frontend as above.

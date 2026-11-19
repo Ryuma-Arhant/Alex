@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import hash_password
 from app.core.errors import Conflict
 from app.db.models import Agent, User, Workspace
-from app.services import audit_service, manager_service
+from app.services import audit_service
 
 
 async def get_by_email(s: AsyncSession, email: str) -> User | None:
@@ -22,7 +22,7 @@ async def create_user(
     password: str | None = None,
     google_sub: str | None = None,
 ) -> User:
-    """Creates the user, their (new, empty) workspace and their manager in one transaction."""
+    """Creates the user and their (new, empty) workspace in one transaction."""
     if await get_by_email(s, email) is not None:
         raise Conflict("An account with this email already exists")
     ws = Workspace()
@@ -38,7 +38,6 @@ async def create_user(
     )
     s.add(user)
     await s.flush()
-    await manager_service.ensure_manager(s, user)
     await audit_service.record(
         s,
         "user.registered",

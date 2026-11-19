@@ -1,50 +1,26 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Provider } from 'react-redux'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { makeStore } from '../app/store'
 import { routes } from '../app/router'
-import { callStarting, muteChanged, statusChanged } from '../features/call/slice'
+import { checkFile } from './BulkCalling'
 
-const setMuted = vi.fn()
-vi.mock('../features/call/CallProvider', () => ({
-    CallProvider: ({ children }) => children,
-    useCall: () => ({
-        manager: { getLevels: () => ({ user: 0, agent: 0 }) },
-        start: vi.fn(),
-        end: vi.fn(),
-        setMuted: (m) => setMuted(m),
-    }),
-}))
 vi.mock('./Landing', () => ({ default: () => <div /> }))
-vi.mock('../components/Sphere/Sphere', () => ({
-    default: () => <div data-testid="sphere" />,
-    sphereMode: () => 'idle',
-}))
 
-const ME = { uid: 'u1', username: 'Ann', email: 'ann@example.com', avatar_url: null, agent_count: 2 }
+const ME = { uid: 'u1', username: 'Ann', email: 'ann@example.com', avatar_url: null, agent_count: 0 }
 const json = (b, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
-const AGENTS = [
-    { aid: 'a1', name: 'Ava', role_behavior: 'Books appointments', status: 'free', lifecycle: 'ACTIVE' },
-    { aid: 'a2', name: 'Ben', role_behavior: 'Answers calls', status: 'busy', lifecycle: 'ACTIVE' },
-]
-const usage = (agentId) => ({
-    metric: 'calls',
-    range: '28d',
-    tz: 'UTC',
-    buckets: Array.from(
-        { length: 28 },
-        (_, i) => `2026-09-${String(23 + (i % 7)).padStart(2, '0')}T00:00:00+00:00`,
-    ),
-    series: agentId
-        ? [{ id: agentId, name: 'Ava', kind: 'agent', points: Array(28).fill(0) }]
-        : [
-              { id: 'a1', name: 'Ava', kind: 'agent', points: Array(28).fill(0) },
-              { id: 'manager', name: 'Manager', kind: 'manager', points: Array(28).fill(1) },
-          ],
-})
+const AGENT = {
+    aid: 'a1',
+    name: 'Ava',
+    role: 'Loan-Recovery Agent',
+    status: 'free',
+    system_prompt: 'You are Ava, a Loan-Recovery Agent.\n# Conduct',
+    created_at: '2026-11-18T10:00:00Z',
+}
 
+/** A fake backend keyed by "METHOD /path"; unknown -> 404. Returns the list of requests seen. */
 function mockApi(handlers) {
     const seen = []
     vi.stubGlobal(
@@ -52,89 +28,251 @@ function mockApi(handlers) {
         vi.fn(async (req) => {
             const u = new URL(req.url)
             const key = `${req.method} ${u.pathname.replace('/api/v1', '')}`
-            seen.push({ key, search: u.searchParams })
+            seen.push({ key, req })
             const h = handlers[key]
             return h ? h(req, u) : json({ error: { message: 'nope' } }, 404)
         }),
     )
     return seen
 }
-const base = {
-    'GET /auth/me': () => json(ME),
-    'GET /users/u1/agents': () => json(AGENTS),
-    'GET /users/u1/stats/usage': (_r, u) => json(usage(u.searchParams.get('agent_id'))),
-}
-function renderAt(path, store = makeStore()) {
+const base = { 'GET /auth/me': () => json(ME) }
+function renderAt(path) {
     const router = createMemoryRouter(routes, { initialEntries: [path] })
     render(
-        <Provider store={store}>
+        <Provider store={makeStore()}>
             <RouterProvider router={router} />
         </Provider>,
     )
-    return { router, store }
+    return router
 }
-afterEach(() => {
-    vi.unstubAllGlobals()
-    setMuted.mockClear()
-})
+afterEach(() => vi.unstubAllGlobals())
 
-describe('dashboard graph', () => {
-    it('queries all agents with the chosen metric and period, and lists every series in the legend', async () => {
-        const seen = mockApi(base)
-        renderAt('/dashboard/u1')
-        const legend = await screen.findByRole('list', { name: 'Legend' })
-        expect(legend).toHaveTextContent('Ava')
-        expect(legend).toHaveTextContent('Manager')
-        await userEvent.selectOptions(screen.getByLabelText('Metric'), 'minutes')
-        await userEvent.selectOptions(screen.getByLabelText('Time period'), 'today')
-        await waitFor(() => {
-            const last = seen.filter((s) => s.key.endsWith('/stats/usage')).at(-1).search
-            expect([last.get('metric'), last.get('range'), last.get('agent_id')]).toEqual([
-                'minutes',
-                'today',
-                null,
-            ])
-        })
+/** An in-memory agent backend: GET / POST / PUT / DELETE on /users/u1/agent. */
+function agentBackend(initial = null, extra = {}) {
+    let agent = initial
+    const seen = mockApi({
+        ...base,
+        'GET /users/u1/agent': () => json(agent),
+        'POST /users/u1/agent': async (req) => {
+            agent = { ...AGENT, name: (await req.json()).name }
+            return json(agent, 201)
+        },
+        'PUT /users/u1/agent': async (req) => {
+            agent = { ...agent, name: (await req.json()).name }
+            return json(agent)
+        },
+        'DELETE /users/u1/agent': () => {
+            agent = null
+            return new Response(null, { status: 204 })
+        },
+        ...extra,
     })
-})
+    return seen
+}
 
-describe('agent info pop-up', () => {
-    it('opens from the card, is read-only, and shows only that agent in its graph', async () => {
-        const seen = mockApi(base)
-        renderAt('/agents/u1')
-        await userEvent.click((await screen.findAllByTestId('agent-card'))[0])
-        const dialog = await screen.findByRole('dialog', { name: /agent info/i })
-        expect(within(dialog).getByText('Books appointments')).toBeInTheDocument()
-        expect(within(dialog).queryByRole('textbox')).toBeNull()
-        expect(within(dialog).queryByRole('button', { name: /save/i })).toBeNull()
-        await waitFor(() =>
-            expect(
-                seen.some((s) => s.key.endsWith('/stats/usage') && s.search.get('agent_id') === 'a1'),
-            ).toBe(true),
+describe('your agent: no agent yet (state A)', () => {
+    it('shows the empty "+" slot and a "+ Create Agent" button', async () => {
+        agentBackend()
+        renderAt('/agent/u1')
+        expect(await screen.findByRole('img', { name: 'No agent yet' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '+ Create Agent' })).toBeInTheDocument()
+    })
+
+    it('Cancel closes the pop-up and creates nothing', async () => {
+        const seen = agentBackend()
+        renderAt('/agent/u1')
+        await userEvent.click(await screen.findByRole('button', { name: '+ Create Agent' }))
+        const dialog = screen.getByRole('dialog')
+        expect(within(dialog).getByLabelText('Name')).toHaveFocus()
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(screen.getByRole('button', { name: '+ Create Agent' })).toBeInTheDocument()
+        expect(seen.some((c) => c.key === 'POST /users/u1/agent')).toBe(false)
+    })
+
+    it('Create makes the agent: the tile shows the name and "Free", and the create button is gone', async () => {
+        const seen = agentBackend()
+        renderAt('/agent/u1')
+        await userEvent.click(await screen.findByRole('button', { name: '+ Create Agent' }))
+        const dialog = screen.getByRole('dialog')
+        expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled() // empty name
+        await userEvent.type(within(dialog).getByLabelText('Name'), '  Ava ')
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
+        const tile = await screen.findByRole('button', { name: /^Ava, Free/ })
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(within(tile).getByText('Ava')).toBeInTheDocument()
+        expect(within(tile).getByText('Free')).toHaveClass('agent-tile-status', 'free')
+        expect(tile.querySelector('.status-dot.free')).not.toBeNull()
+        expect(screen.queryByRole('button', { name: '+ Create Agent' })).toBeNull()
+        expect(seen.filter((c) => c.key === 'POST /users/u1/agent')).toHaveLength(1) // the name was sent trimmed
+    })
+
+    it('shows the server error inside the pop-up', async () => {
+        agentBackend(null, {
+            'POST /users/u1/agent': () => json({ error: { message: 'You already have an agent.' } }, 409),
+        })
+        renderAt('/agent/u1')
+        await userEvent.click(await screen.findByRole('button', { name: '+ Create Agent' }))
+        await userEvent.type(screen.getByLabelText('Name'), 'Ava')
+        await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+        expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent(
+            'already have an agent',
         )
     })
-    it('the edit button and status dot do not open it; Escape, backdrop and Close do close it', async () => {
-        mockApi(base)
-        const { router } = renderAt('/agents/u1')
-        const card = (await screen.findAllByTestId('agent-card'))[0]
-        await userEvent.click(within(card).getByRole('img', { name: /free/i }))
+})
+
+describe('your agent: the agent tile and details', () => {
+    it('a busy agent shows a red dot and "In-Call"', async () => {
+        agentBackend({ ...AGENT, status: 'busy' })
+        renderAt('/agent/u1')
+        const tile = await screen.findByRole('button', { name: /^Ava, In-Call/ })
+        expect(within(tile).getByText('In-Call')).toHaveClass('busy')
+        expect(tile.querySelector('.status-dot.busy')).not.toBeNull()
+    })
+
+    it('clicking the tile replaces it with the details: name, system prompt, rename and delete', async () => {
+        agentBackend(AGENT)
+        const router = renderAt('/agent/u1')
+        await userEvent.click(await screen.findByRole('button', { name: /^Ava, Free/ }))
+        expect(screen.queryByRole('button', { name: /^Ava, Free/ })).toBeNull()
+        expect(screen.getByRole('heading', { name: 'Ava' })).toBeInTheDocument()
+        expect(screen.getByLabelText('System prompt')).toHaveTextContent(
+            'You are Ava, a Loan-Recovery Agent.',
+        )
+        expect(screen.getByRole('button', { name: 'Rename Agent' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Delete Agent' })).toBeInTheDocument()
+        expect(router.state.location.search).toBe('?view=details')
+        await userEvent.click(screen.getByRole('button', { name: /back/i }))
+        expect(await screen.findByRole('button', { name: /^Ava, Free/ })).toBeInTheDocument()
+    })
+
+    it('Rename: Cancel changes nothing; Rename saves the new name', async () => {
+        const seen = agentBackend(AGENT)
+        renderAt('/agent/u1?view=details')
+        await userEvent.click(await screen.findByRole('button', { name: 'Rename Agent' }))
+        let dialog = screen.getByRole('dialog')
+        const input = within(dialog).getByLabelText('New Name')
+        expect(input).toHaveValue('Ava')
+        expect(within(dialog).getByRole('button', { name: 'Rename' })).toBeDisabled() // unchanged
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
         expect(screen.queryByRole('dialog')).toBeNull()
-        await userEvent.click(within(card).getByRole('button', { name: 'Edit Ava' }))
+        expect(seen.some((c) => c.key === 'PUT /users/u1/agent')).toBe(false)
+
+        await userEvent.click(screen.getByRole('button', { name: 'Rename Agent' }))
+        dialog = screen.getByRole('dialog')
+        await userEvent.clear(within(dialog).getByLabelText('New Name'))
+        await userEvent.type(within(dialog).getByLabelText('New Name'), 'Maya')
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Rename' }))
+        expect(await screen.findByRole('heading', { name: 'Maya' })).toBeInTheDocument()
         expect(screen.queryByRole('dialog')).toBeNull()
-        expect(router.state.location.pathname).toBe('/agents/u1/update/a1')
-        router.navigate('/agents/u1')
-        const again = (await screen.findAllByTestId('agent-card'))[0]
-        await userEvent.click(again)
-        await screen.findByRole('dialog')
+    })
+
+    it('Delete asks first; Cancel keeps the agent, "Yes" deletes it and returns to state A', async () => {
+        const seen = agentBackend(AGENT)
+        renderAt('/agent/u1?view=details')
+        await userEvent.click(await screen.findByRole('button', { name: 'Delete Agent' }))
+        expect(
+            screen.getByRole('dialog', { name: 'Are you sure you want to delete the agent?' }),
+        ).toBeInTheDocument()
+        await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(seen.some((c) => c.key === 'DELETE /users/u1/agent')).toBe(false)
+
+        await userEvent.click(screen.getByRole('button', { name: 'Delete Agent' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Yes, delete the agent' }))
+        expect(await screen.findByRole('button', { name: '+ Create Agent' })).toBeInTheDocument()
+        expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    it('Escape closes a pop-up', async () => {
+        agentBackend(AGENT)
+        renderAt('/agent/u1?view=details')
+        await userEvent.click(await screen.findByRole('button', { name: 'Rename Agent' }))
         await userEvent.keyboard('{Escape}')
         expect(screen.queryByRole('dialog')).toBeNull()
-        await userEvent.click(again)
-        await userEvent.click(screen.getByRole('dialog').parentElement) // the backdrop
-        expect(screen.queryByRole('dialog')).toBeNull()
-        await userEvent.click(again)
-        await userEvent.click(screen.getByRole('button', { name: 'Close' }))
-        expect(screen.queryByRole('dialog')).toBeNull()
-        expect(document.body.style.overflow).toBe('')
+    })
+})
+
+describe('bulk calling', () => {
+    const csv = (text, name = 'people.csv') => new File([text], name, { type: 'text/csv' })
+    const RESULT = {
+        total: 2,
+        valid: 1,
+        invalid: 1,
+        columns: { name: 'name', phone: 'phone', amount: 'amount_due', deadline: 'deadline' },
+        ignored_columns: ['extra'],
+        rows: [
+            {
+                line: 2,
+                name: 'Ravi Kumar',
+                phone: '+919876543210',
+                amount: '5200.50',
+                currency: 'INR',
+                deadline: '2026-12-05',
+                lender: 'Sunrise Bank',
+                loan_reference: 'LN-1',
+                notes: '',
+                valid: true,
+                errors: [],
+                warnings: [],
+            },
+            {
+                line: 3,
+                name: 'Bad Row',
+                phone: '12345',
+                amount: '-3',
+                currency: 'INR',
+                deadline: '',
+                lender: '',
+                loan_reference: '',
+                notes: '',
+                valid: false,
+                errors: ['Deadline is missing', 'Phone: enter a valid phone number'],
+                warnings: [],
+            },
+        ],
+    }
+
+    it('checks the file type and size before uploading', () => {
+        expect(checkFile(csv('a', 'people.xlsx'))).toMatch(/\.csv/)
+        expect(checkFile(csv(''))).toMatch(/empty/)
+        expect(checkFile(csv('x'.repeat(1024 * 1024 + 1)))).toMatch(/1 MB/)
+        expect(checkFile(csv('name\n'))).toBeNull()
+    })
+
+    it('uploads the CSV and previews every row with its errors', async () => {
+        const seen = mockApi({ ...base, 'POST /users/u1/bulk-calls/preview': () => json(RESULT) })
+        renderAt('/bulk-calling/u1')
+        expect(await screen.findByRole('heading', { name: 'Bulk Calling' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Download sample CSV' })).toBeInTheDocument()
+        await userEvent.upload(screen.getByLabelText('CSV file of people to call'), csv('name,phone\n'))
+        const table = await screen.findByRole('region', { name: 'Borrowers in the file' })
+        expect(within(table).getByText('Ravi Kumar')).toBeInTheDocument()
+        expect(within(table).getByText('Ready')).toBeInTheDocument()
+        expect(within(table).getByText('Deadline is missing')).toBeInTheDocument()
+        expect(screen.getByText('Ignored column(s): extra')).toBeInTheDocument()
+        const post = seen.find((c) => c.key === 'POST /users/u1/bulk-calls/preview').req
+        expect(post.headers.get('content-type')).toBe('text/csv')
+        await userEvent.click(screen.getByLabelText('Show only rows that need attention'))
+        expect(within(table).queryByText('Ravi Kumar')).toBeNull()
+        await userEvent.click(screen.getByRole('button', { name: 'Choose another file' }))
+        expect(screen.getByLabelText('CSV file of people to call')).toBeInTheDocument()
+    })
+
+    it('shows a file-level error from the server and a client-side error for non-CSV files', async () => {
+        mockApi({
+            ...base,
+            'POST /users/u1/bulk-calls/preview': () =>
+                json({ error: { message: 'Missing required column(s): Deadline.' } }, 422),
+        })
+        renderAt('/bulk-calling/u1')
+        const input = await screen.findByLabelText('CSV file of people to call')
+        await userEvent.upload(input, csv('name\n'))
+        expect(await screen.findByRole('alert')).toHaveTextContent('Missing required column(s): Deadline.')
+        await userEvent.upload(input, new File(['x'], 'people.txt', { type: 'text/csv' }), {
+            applyAccept: false,
+        })
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Please choose a .csv file.'))
     })
 })
 
@@ -176,94 +314,5 @@ describe('settings', () => {
         expect(document.documentElement.style.getPropertyValue('--font-sans')).toContain('Open Sans Variable')
         expect(screen.getByRole('switch', { name: 'Theme' })).toBeInTheDocument()
         expect(screen.queryByRole('option', { name: /dyslexic|anthropic/i })).toBeNull()
-    })
-})
-
-describe('manager: old calls during a live call', () => {
-    const CALLS = [
-        { id: 'c1', title: 'First', status: 'COMPLETED', summary_status: 'READY', started_at: null },
-        { id: 'c2', title: 'Second', status: 'COMPLETED', summary_status: 'READY', started_at: null },
-    ]
-    const callDetail = (id, title) => ({
-        id,
-        title,
-        summary_status: 'READY',
-        turns: [{ seq: 0, speaker: 'agent', text: `Transcript of ${title}`, is_final: true }],
-        summary: null,
-    })
-    const api = {
-        ...base,
-        'GET /users/u1/manager/calls': () => json(CALLS),
-        'GET /calls/c1': () => json(callDetail('c1', 'First')),
-        'GET /calls/c2': () => json(callDetail('c2', 'Second')),
-    }
-    const goLive = (store) =>
-        act(() => {
-            store.dispatch(callStarting('live1'))
-            store.dispatch(statusChanged('connected'))
-        })
-
-    it('not on a call: an old call opens normally', async () => {
-        mockApi(api)
-        const { router } = renderAt('/manager/u1')
-        await userEvent.click(await screen.findByRole('link', { name: 'First' }))
-        expect(router.state.location.pathname).toBe('/manager/u1/chats/c1')
-        expect(screen.queryByRole('menu')).toBeNull()
-    })
-
-    it('on a call: offers full or split view, keeps the call, and replaces one old call with another', async () => {
-        mockApi(api)
-        const { router, store } = renderAt('/manager/u1')
-        const first = await screen.findByRole('link', { name: 'First' })
-        goLive(store)
-        await userEvent.click(first)
-        const menu = await screen.findByRole('menu')
-        expect(
-            within(menu)
-                .getAllByRole('menuitem')
-                .map((b) => b.textContent),
-        ).toEqual(['Full view', 'Split view'])
-        expect(router.state.location.pathname).toBe('/manager/u1') // the call page is not left
-        await userEvent.click(within(menu).getByRole('menuitem', { name: 'Split view' }))
-        expect(await screen.findByText('Transcript of First')).toBeInTheDocument()
-        expect(screen.getByTestId('sphere')).toBeInTheDocument() // the live call is still on screen
-        expect(setMuted).not.toHaveBeenCalled()
-        // another old call replaces it: no menu, a single old-call panel
-        await userEvent.click(screen.getByRole('link', { name: 'Second' }))
-        expect(screen.queryByRole('menu')).toBeNull()
-        expect(await screen.findByText('Transcript of Second')).toBeInTheDocument()
-        expect(screen.queryByText('Transcript of First')).toBeNull()
-        expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-        expect(store.getState().call.status).toBe('connected')
-    })
-
-    it('full view hides the live call, mutes the microphone, and "Back to call" restores everything', async () => {
-        mockApi(api)
-        const { store } = renderAt('/manager/u1')
-        const first = await screen.findByRole('link', { name: 'First' })
-        goLive(store)
-        await userEvent.click(first)
-        await userEvent.click(await screen.findByRole('menuitem', { name: 'Full view' }))
-        expect(await screen.findByText('Transcript of First')).toBeInTheDocument()
-        expect(screen.queryByTestId('sphere')).toBeNull()
-        expect(setMuted).toHaveBeenCalledWith(true)
-        act(() => void store.dispatch(muteChanged(true)))
-        await userEvent.click(screen.getByRole('button', { name: 'Back to call' }))
-        expect(await screen.findByTestId('sphere')).toBeInTheDocument()
-        expect(setMuted).toHaveBeenLastCalledWith(false)
-        expect(store.getState().call.status).toBe('connected')
-    })
-
-    it('when the call ends the old call closes and the normal layout returns', async () => {
-        mockApi(api)
-        const { store } = renderAt('/manager/u1')
-        const first = await screen.findByRole('link', { name: 'First' })
-        goLive(store)
-        await userEvent.click(first)
-        await userEvent.click(await screen.findByRole('menuitem', { name: 'Split view' }))
-        await screen.findByText('Transcript of First')
-        act(() => void store.dispatch(statusChanged('ended')))
-        await waitFor(() => expect(screen.queryByText('Transcript of First')).toBeNull())
-        expect(screen.getByTestId('sphere')).toBeInTheDocument()
     })
 })

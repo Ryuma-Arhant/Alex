@@ -1,11 +1,10 @@
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Integer, Numeric, String, Text, Uuid
+from sqlalchemy import Date, ForeignKey, Index, Integer, String, Text, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, CreatedMixin, IdMixin, utcnow
+from app.db.base import Base, CreatedMixin, utcnow
 
 
 class User(Base, CreatedMixin):
@@ -23,44 +22,34 @@ class User(Base, CreatedMixin):
 
 
 class Agent(Base, CreatedMixin):
-    """A user-defined voice agent. PENDING until the payment step succeeds, then ACTIVE."""
+    """A user's Loan-Recovery voice agent. At most one ACTIVE agent per user; deleting marks it DELETED so its past
+    calls stay linked to it."""
 
     __tablename__ = "agents"
+    __table_args__ = (
+        Index(
+            "uq_agents_one_active_per_user",
+            "uid",
+            unique=True,
+            postgresql_where=text("lifecycle = 'ACTIVE'"),
+            sqlite_where=text("lifecycle = 'ACTIVE'"),
+        ),
+    )
     aid: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     uid: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.uid"), index=True)
     name: Mapped[str] = mapped_column(String(80))
-    role_behavior: Mapped[str] = mapped_column(Text)
-    lifecycle: Mapped[str] = mapped_column(String(10), default="PENDING")  # PENDING | ACTIVE
+    role_behavior: Mapped[str] = mapped_column(Text)  # the agent's role; always "Loan-Recovery Agent" today
+    lifecycle: Mapped[str] = mapped_column(String(10), default="ACTIVE")  # ACTIVE | DELETED
     profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_profiles.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
-class Manager(Base, CreatedMixin):
-    """One per user: the voice agent that knows about all of the user's agents."""
-
-    __tablename__ = "managers"
-    mid: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    uid: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.uid"), unique=True)
-    profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_profiles.id"), nullable=True)
-
-
-class AgentPayment(Base, IdMixin, CreatedMixin):
-    """Simulated payment attempts (no real gateway)."""
-
-    __tablename__ = "agent_payments"
-    aid: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.aid"), index=True)
-    uid: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.uid"), index=True)
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    status: Mapped[str] = mapped_column(String(10))  # SUCCEEDED | REJECTED
-
-
 class CallLink(Base, CreatedMixin):
-    """Says whose call this is (a manager call or an agent call) without touching the `calls` table."""
+    """Says whose call this is (and which agent made it, if any) without touching the `calls` table."""
 
     __tablename__ = "call_links"
     call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calls.id"), primary_key=True)
     uid: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.uid"), index=True)
-    manager_mid: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managers.mid"), nullable=True, index=True)
     agent_aid: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agents.aid"), nullable=True, index=True)
 
 

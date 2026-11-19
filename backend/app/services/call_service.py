@@ -22,7 +22,7 @@ async def create_web_call(
     version: AgentProfileVersion | None = None,
     link: CallLink | None = None,
 ) -> tuple[Call, str]:
-    """`version`/`link` let the manager and agent calls pin a specific profile version and record ownership."""
+    """`version`/`link` let agent calls pin a specific profile version and record ownership."""
     if profile_id is not None:
         raise NotFound("Selecting a non-active profile is not supported yet")
     if version is None:

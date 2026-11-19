@@ -1,6 +1,5 @@
 import { render, screen } from '@testing-library/react'
 import LineChart, { niceTicks, seriesColor } from './LineChart'
-import { bucketLabels } from '../Dashboard/UsageGraph'
 
 describe('niceTicks', () => {
     it('gives an integer scale even for empty data', () => {
@@ -54,9 +53,17 @@ describe('LineChart', () => {
     })
 })
 
-describe('bucketLabels', () => {
-    it('shows hours for today and dates otherwise, from the zone-local part of the instant', () => {
-        expect(bucketLabels(['2026-10-20T15:00:00+05:30'], 'today')).toEqual(['15:00'])
-        expect(bucketLabels(['2026-10-20T00:00:00+00:00'], '7d')[0]).toMatch(/20/)
+describe('axis titles', () => {
+    it('draws the optional X and Y titles', () => {
+        const { container } = render(
+            <LineChart
+                labels={['Mon', 'Tue']}
+                series={[{ id: 's', name: 'S', color: 'red', points: [1, 2] }]}
+                xTitle="Day of the week"
+                yTitle="Number of calls"
+            />,
+        )
+        const titles = [...container.querySelectorAll('.chart-axis-title')].map((t) => t.textContent)
+        expect(titles).toEqual(['Number of calls', 'Day of the week'])
     })
 })

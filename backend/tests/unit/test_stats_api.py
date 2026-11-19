@@ -3,94 +3,71 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from httpx import AsyncClient
+from sqlalchemy import select
 
-from app.db.models import Call, CallLink
-from tests.unit.test_accounts_api import _make_agent, register
-
-
-async def _active_agent(c: AsyncClient, uid: str, name: str = "Ava") -> str:
-    aid = await _make_agent(c, uid, name)
-    await c.post(f"/api/v1/users/{uid}/agents/{aid}/payment", json={"amount": 100})
-    return aid
+from app.db.models import AgentProfileVersion, Call, CallLink, User
+from tests.unit.test_accounts_api import make_agent, register
 
 
-async def _add_call(
-    sm: Any, uid: str, *, agent: str | None, mid: uuid.UUID | None = None, start: datetime, minutes: float | None
-) -> None:
-    from app.db.models import AgentProfile, AgentProfileVersion, User
-
+async def _add_call(sm: Any, uid: str, *, agent: str | None, start: datetime) -> None:
     async with sm() as s:
         user = await s.get(User, uuid.UUID(uid))
         assert user is not None
-        pv = (await s.scalars(__import__("sqlalchemy").select(AgentProfileVersion).limit(1))).first()
-        if pv is None:
-            ap = AgentProfile(workspace_id=user.workspace_id, source="t")
-            s.add(ap)
-            await s.flush()
-            pv = AgentProfileVersion(
-                profile_id=ap.id, version=1, source="t", fields_json={}, context_prompt="p", model="m"
-            )
-            s.add(pv)
-            await s.flush()
+        pv = (await s.scalars(select(AgentProfileVersion).limit(1))).first()
+        assert pv is not None
         cid = uuid.uuid4()
-        call = Call(
-            id=cid,
-            workspace_id=user.workspace_id,
-            room_name=f"r-{cid}",
-            correlation_id="c",
-            profile_version_id=pv.id,
-            started_at=start,
-            created_at=start,
-            ended_at=None if minutes is None else start + timedelta(minutes=minutes),
+        s.add(
+            Call(
+                id=cid,
+                workspace_id=user.workspace_id,
+                room_name=f"r-{cid}",
+                correlation_id="c",
+                profile_version_id=pv.id,
+                started_at=start,
+                created_at=start,
+                ended_at=start + timedelta(minutes=3),
+            )
         )
-        s.add(call)
         await s.flush()
-        s.add(CallLink(call_id=cid, uid=user.uid, agent_aid=uuid.UUID(agent) if agent else None, manager_mid=mid))
+        s.add(CallLink(call_id=cid, uid=user.uid, agent_aid=uuid.UUID(agent) if agent else None))
         await s.commit()
 
 
-async def test_usage_zero_series_and_validation(client: AsyncClient) -> None:
+async def test_seven_zero_days_without_an_agent(client: AsyncClient) -> None:
     u = await register(client)
-    aid = await _active_agent(client, u["uid"])
-    base = f"/api/v1/users/{u['uid']}/stats/usage"
-    r = await client.get(base, params={"metric": "calls", "range": "28d"})
+    r = await client.get(f"/api/v1/users/{u['uid']}/stats/calls-per-day")
     assert r.status_code == 200
     body = r.json()
-    assert len(body["buckets"]) == 28 and body["tz"] == "UTC"
-    assert [s["name"] for s in body["series"]] == ["Ava", "Manager"]
-    assert all(sum(s["points"]) == 0 and len(s["points"]) == 28 for s in body["series"])
-    assert len((await client.get(base, params={"metric": "minutes", "range": "today"})).json()["buckets"]) == 24
-    assert (await client.get(base, params={"metric": "bogus", "range": "7d"})).status_code == 422
-    assert (await client.get(base, params={"metric": "calls", "range": "1y"})).status_code == 422
-    assert (await client.get(base, params={"metric": "calls", "range": "7d", "tz": "Nope/Zone"})).status_code == 422
-    assert (await client.get(base, params={"metric": "calls", "range": "7d", "agent_id": aid})).status_code == 200
+    assert body["tz"] == "UTC" and len(body["days"]) == 7
+    assert body["days"][-1]["date"] == body["today"] == datetime.now(UTC).date().isoformat()
+    assert all(d["calls"] == 0 for d in body["days"])
+    assert body["days"][-1]["weekday"] == ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[datetime.now(UTC).weekday()]
 
 
-async def test_usage_counts_minutes_rule_and_agent_filter(client: AsyncClient, app_and_sm: Any) -> None:
+async def test_counts_only_the_agents_calls_in_the_last_seven_days(client: AsyncClient, app_and_sm: Any) -> None:
     _, sm = app_and_sm
     u = await register(client)
-    aid = await _active_agent(client, u["uid"])
-    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
-    await _add_call(sm, u["uid"], agent=aid, start=now, minutes=10)
-    await _add_call(sm, u["uid"], agent=aid, start=now, minutes=None)  # never ended: no minutes
-    await _add_call(sm, u["uid"], agent=aid, start=now, minutes=5000)  # capped at 120
-    base = f"/api/v1/users/{u['uid']}/stats/usage"
-    calls = (await client.get(base, params={"metric": "calls", "range": "7d", "agent_id": aid})).json()
-    assert sum(calls["series"][0]["points"]) == 3 and calls["series"][0]["points"][-1] == 3
-    mins = (await client.get(base, params={"metric": "minutes", "range": "7d", "agent_id": aid})).json()
-    assert sum(mins["series"][0]["points"]) == 130.0
-    assert len(mins["series"]) == 1
+    aid = (await make_agent(client, u["uid"]))["aid"]
+    now = datetime.now(UTC)
+    for _ in range(3):
+        await _add_call(sm, u["uid"], agent=aid, start=now)
+    await _add_call(sm, u["uid"], agent=aid, start=now - timedelta(days=2))
+    await _add_call(sm, u["uid"], agent=aid, start=now - timedelta(days=10))  # too old
+    await _add_call(sm, u["uid"], agent=None, start=now)  # not an agent call
+    days = (await client.get(f"/api/v1/users/{u['uid']}/stats/calls-per-day")).json()["days"]
+    assert [d["calls"] for d in days] == [0, 0, 0, 0, 1, 0, 3]
+    # a deleted agent's calls do not count for the new agent
+    await client.delete(f"/api/v1/users/{u['uid']}/agent")
+    await make_agent(client, u["uid"], "Ben")
+    days = (await client.get(f"/api/v1/users/{u['uid']}/stats/calls-per-day")).json()["days"]
+    assert sum(d["calls"] for d in days) == 0
 
 
-async def test_usage_agent_filter_ownership(client: AsyncClient, other_client: AsyncClient) -> None:
+async def test_timezone_validation_and_ownership(client: AsyncClient, other_client: AsyncClient) -> None:
     a = await register(client)
     b = await register(other_client, "bob@example.com", "Bob")
-    aid = await _active_agent(client, a["uid"])
-    q = {"metric": "calls", "range": "7d"}
-    mine = await other_client.get(f"/api/v1/users/{b['uid']}/stats/usage", params={**q, "agent_id": aid})
-    missing = await other_client.get(
-        f"/api/v1/users/{b['uid']}/stats/usage", params={**q, "agent_id": str(uuid.uuid4())}
-    )
-    assert mine.status_code == missing.status_code == 404
-    assert mine.json()["error"]["message"] == missing.json()["error"]["message"]
-    assert (await other_client.get(f"/api/v1/users/{a['uid']}/stats/usage", params=q)).status_code == 403
+    url = f"/api/v1/users/{a['uid']}/stats/calls-per-day"
+    assert (await client.get(url, params={"tz": "Asia/Kolkata"})).json()["tz"] == "Asia/Kolkata"
+    assert (await client.get(url, params={"tz": "Nope/Zone"})).status_code == 422
+    assert (await other_client.get(url)).status_code == 403
+    assert (await other_client.get(f"/api/v1/users/{b['uid']}/stats/calls-per-day")).status_code == 200

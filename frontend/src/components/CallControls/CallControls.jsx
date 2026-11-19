@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import { errorMessage } from '../../api/api'
 import { useAppSelector } from '../../app/hooks'
 import { useCall } from '../../features/call/CallProvider'
 const LABEL = {
@@ -9,15 +12,30 @@ const LABEL = {
     ended: 'Call ended',
     failed: 'Call failed',
 }
-export default function CallControls() {
+export const LIVE = ['connecting', 'waiting_for_agent', 'connected', 'reconnecting']
+export default function CallControls({ backTo }) {
     const { status, muted, error } = useAppSelector((s) => s.call)
-    const { start, end, setMuted } = useCall()
-    const live = ['connecting', 'waiting_for_agent', 'connected', 'reconnecting'].includes(status)
+    const { client, start, end, setMuted } = useCall()
+    const [restartError, setRestartError] = useState(null)
+    const [restarting, setRestarting] = useState(false)
+    const live = LIVE.includes(status)
+    const callAgain = async () => {
+        setRestartError(null)
+        setRestarting(true)
+        try {
+            await start(client)
+        } catch (err) {
+            setRestartError(errorMessage(err, 'Could not start the call. Please try again.'))
+        } finally {
+            setRestarting(false)
+        }
+    }
+    const shownError = restartError ?? error
     return (
         <div className="controls">
-            {error && (
+            {shownError && (
                 <div className="banner error" role="alert">
-                    {error}
+                    {shownError}
                 </div>
             )}
             <div className="row">
@@ -26,9 +44,20 @@ export default function CallControls() {
             </div>
             <div className="row">
                 {!live && (
-                    <button className="primary" onClick={() => void start()}>
-                        {status === 'idle' ? 'Start call' : 'Start a new call'}
-                    </button>
+                    <>
+                        <Link className="button" to={backTo}>
+                            Back to Your Agent
+                        </Link>
+                        {client && (
+                            <button
+                                className="primary"
+                                onClick={() => void callAgain()}
+                                disabled={restarting}
+                            >
+                                {restarting ? 'Starting…' : 'Call again'}
+                            </button>
+                        )}
+                    </>
                 )}
                 {live && (
                     <>

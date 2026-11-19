@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
-import pytest
 from httpx import AsyncClient
 
 from app.core.config import get_settings
@@ -84,54 +83,75 @@ async def test_uid_mismatch_is_403_and_csrf_enforced(client: AsyncClient, other_
     a = await register(client)
     b = await register(other_client, "bob@example.com", "Bob")
     assert (await client.get(f"/api/v1/users/{b['uid']}")).status_code == 403
-    assert (await client.get(f"/api/v1/users/{a['uid']}/agents")).status_code == 200
+    assert (await client.get(f"/api/v1/users/{b['uid']}/agent")).status_code == 403
+    assert (await client.get(f"/api/v1/users/{a['uid']}/agent")).status_code == 200
     del client.headers["X-CSRF-Token"]
-    r = await client.post(f"/api/v1/users/{a['uid']}/agents", json={"name": "X", "role_behavior": "does things well"})
-    assert r.status_code == 403
+    assert (await client.post(f"/api/v1/users/{a['uid']}/agent", json={"name": "X"})).status_code == 403
 
 
-async def _make_agent(c: AsyncClient, uid: str, name: str = "Ava") -> str:
-    r = await c.post(f"/api/v1/users/{uid}/agents", json={"name": name, "role_behavior": "Books dental appointments"})
-    assert r.status_code == 201
-    return r.json()["aid"]  # type: ignore[no-any-return]
+async def make_agent(c: AsyncClient, uid: str, name: str = "Ava") -> dict[str, Any]:
+    r = await c.post(f"/api/v1/users/{uid}/agent", json={"name": name})
+    assert r.status_code == 201, r.text
+    return r.json()  # type: ignore[no-any-return]
 
 
-async def test_agent_payment_flow(client: AsyncClient) -> None:
+async def test_single_agent_lifecycle(client: AsyncClient) -> None:
     u = await register(client)
-    base = f"/api/v1/users/{u['uid']}/agents"
-    aid = await _make_agent(client, u["uid"])
-    assert (await client.get(base)).json() == []  # pending agents are hidden
-    for amount in (99, 100.5, 0):
-        r = await client.post(f"{base}/{aid}/payment", json={"amount": amount})
-        assert r.status_code == 402
-    assert (await client.get(base)).json() == []
-    ok = await client.post(f"{base}/{aid}/payment", json={"amount": 100})
-    assert ok.status_code == 200 and ok.json()["lifecycle"] == "ACTIVE"
-    listed = (await client.get(base)).json()
-    assert [a["name"] for a in listed] == ["Ava"] and listed[0]["status"] == "free"
-    assert (await client.post(f"{base}/{aid}/payment", json={"amount": 100})).status_code == 409
+    url = f"/api/v1/users/{u['uid']}/agent"
+    r = await client.get(url)
+    assert r.status_code == 200 and r.json() is None  # state A: no agent yet
+    a = await make_agent(client, u["uid"], "  Ava   Rao ")
+    assert a["name"] == "Ava Rao" and a["status"] == "free" and a["role"] == "Loan-Recovery Agent"
+    assert "Loan-Recovery Agent" in a["system_prompt"] and "You are Ava Rao" in a["system_prompt"]
+    assert (await client.get(url)).json()["aid"] == a["aid"]
     assert (await client.get("/api/v1/auth/me")).json()["agent_count"] == 1
+    # only one agent at a time
+    dup = await client.post(url, json={"name": "Second"})
+    assert dup.status_code == 409
+    for bad in ({"name": ""}, {"name": "   "}, {"name": "x" * 81}, {}):
+        assert (await client.post(url, json=bad)).status_code in (409, 422)
+    # rename: a new prompt version carries the new name
+    r = await client.put(url, json={"name": "Maya"})
+    assert r.status_code == 200 and r.json()["name"] == "Maya" and "You are Maya" in r.json()["system_prompt"]
+    assert r.json()["aid"] == a["aid"]
+    # delete -> back to state A, and a new agent can be created
+    assert (await client.delete(url)).status_code == 204
+    assert (await client.get(url)).json() is None
+    assert (await client.get("/api/v1/auth/me")).json()["agent_count"] == 0
+    assert (await client.put(url, json={"name": "Ghost"})).status_code == 404
+    assert (await client.delete(url)).status_code == 404
+    b = await make_agent(client, u["uid"], "Ben")
+    assert b["aid"] != a["aid"]
 
 
-async def test_agent_update_and_ownership(client: AsyncClient, other_client: AsyncClient) -> None:
+async def test_every_agent_shares_the_same_prompt(client: AsyncClient, other_client: AsyncClient) -> None:
     a = await register(client)
     b = await register(other_client, "bob@example.com", "Bob")
-    aid = await _make_agent(client, a["uid"])
-    await client.post(f"/api/v1/users/{a['uid']}/agents/{aid}/payment", json={"amount": 100})
-    r = await client.put(
-        f"/api/v1/users/{a['uid']}/agents/{aid}", json={"name": "Ava2", "role_behavior": "Now handles cancellations"}
+    pa = (await make_agent(client, a["uid"], "Ava"))["system_prompt"]
+    pb = (await make_agent(other_client, b["uid"], "Ava"))["system_prompt"]
+    assert pa == pb
+
+
+async def test_agent_is_busy_during_a_call_and_cannot_be_deleted(client: AsyncClient, app_and_sm: Any) -> None:
+    from app.db.models import Call
+
+    u = await register(client)
+    await make_agent(client, u["uid"])
+    r = await client.post(
+        f"/api/v1/users/{u['uid']}/collections/calls",
+        json={"borrower_name": "Ravi Kumar", "phone": "+919876543210", "amount": "100", "bank": "Sunrise Bank"},
     )
-    assert r.status_code == 200 and r.json()["name"] == "Ava2"
-    assert (await client.get(f"/api/v1/users/{a['uid']}/agents")).json()[0]["role_behavior"].startswith("Now handles")
-    # Bob cannot reach Ava's agent, even through his own uid
-    steal = await other_client.put(
-        f"/api/v1/users/{b['uid']}/agents/{aid}", json={"name": "Mine", "role_behavior": "Stolen agent role"}
-    )
-    assert steal.status_code == 404
-    assert (
-        await other_client.post(f"/api/v1/users/{b['uid']}/agents/{aid}/payment", json={"amount": 100})
-    ).status_code == 404
-    assert (await other_client.get(f"/api/v1/users/{b['uid']}/agents")).json() == []
+    assert r.status_code == 200, r.text
+    url = f"/api/v1/users/{u['uid']}/agent"
+    assert (await client.get(url)).json()["status"] == "busy"
+    assert (await client.delete(url)).status_code == 409
+    _, sm = app_and_sm
+    async with sm() as s:
+        call = await s.get(Call, uuid.UUID(r.json()["call_id"]))
+        call.ended_at = datetime.now(UTC)
+        await s.commit()
+    assert (await client.get(url)).json()["status"] == "free"
+    assert (await client.delete(url)).status_code == 204
 
 
 async def test_avatar_upload(client: AsyncClient) -> None:
@@ -148,32 +168,15 @@ async def test_avatar_upload(client: AsyncClient) -> None:
     assert got.status_code == 200 and got.content == PNG and got.headers["content-type"] == "image/png"
 
 
-async def test_manager_prompt_lists_agents_and_call_is_linked(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    u = await register(client)
-    await client.post(
-        f"/api/v1/users/{u['uid']}/agents/{await _make_agent(client, u['uid'])}/payment", json={"amount": 100}
-    )
-    m = await client.get(f"/api/v1/users/{u['uid']}/manager")
-    assert m.status_code == 200
-    r = await client.post(f"/api/v1/users/{u['uid']}/manager/calls")
-    assert r.status_code == 200, r.text
-    cid = r.json()["call_id"]
-    listed = (await client.get(f"/api/v1/users/{u['uid']}/manager/calls")).json()
-    assert [c["id"] for c in listed] == [cid]
-    from tests.conftest import INTERNAL
-
-    ctx = (await client.get(f"/internal/calls/{cid}/context", headers=INTERNAL)).json()
-    prompt = ctx["profile"]["context_prompt"]
-    assert "Ava" in prompt and "free" in prompt
-    # existing per-call endpoint works for the owner through their workspace
-    assert (await client.get(f"/api/v1/calls/{cid}")).status_code == 200
-    uuid.UUID(cid)
-
-
 async def test_calls_isolated_between_users(client: AsyncClient, other_client: AsyncClient) -> None:
     a = await register(client)
     await register(other_client, "bob@example.com", "Bob")
-    cid = (await client.post(f"/api/v1/users/{a['uid']}/manager/calls")).json()["call_id"]
+    await make_agent(client, a["uid"])
+    cid = (
+        await client.post(
+            f"/api/v1/users/{a['uid']}/collections/calls",
+            json={"borrower_name": "Ravi Kumar", "phone": "+919876543210", "amount": "100", "bank": "Sunrise Bank"},
+        )
+    ).json()["call_id"]
+    assert (await client.get(f"/api/v1/calls/{cid}")).status_code == 200
     assert (await other_client.get(f"/api/v1/calls/{cid}")).status_code == 404

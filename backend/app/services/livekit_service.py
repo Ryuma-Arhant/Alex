@@ -1,8 +1,11 @@
 """Token minting and room control. Tokens are short-lived with minimal grants."""
 
+import ssl
 import uuid
 from datetime import timedelta
 
+import aiohttp
+import certifi
 from livekit import api
 
 from app.core.config import Settings
@@ -35,9 +38,16 @@ def mint_participant_token(
     )
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """certifi's CA bundle: python.org builds of Python on macOS ship without a system trust store, so the default
+    context cannot verify LiveKit Cloud's certificate (the agent worker applies the same fix to itself)."""
+    return ssl.create_default_context(cafile=certifi.where())
+
+
 async def close_room(settings: Settings, room: str) -> None:
-    lk = api.LiveKitAPI(settings.livekit_url, settings.livekit_api_key, settings.livekit_api_secret)
-    try:
-        await lk.room.delete_room(api.DeleteRoomRequest(room=room))
-    finally:
-        await lk.aclose()
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=_ssl_context())) as http:
+        lk = api.LiveKitAPI(settings.livekit_url, settings.livekit_api_key, settings.livekit_api_secret, session=http)
+        try:
+            await lk.room.delete_room(api.DeleteRoomRequest(room=room))
+        finally:
+            await lk.aclose()

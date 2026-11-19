@@ -1,14 +1,14 @@
 import { NavLink } from 'react-router-dom'
 
 export const NAV_ITEMS = [
-    { label: 'My Dashboard', path: 'dashboard' },
-    { label: 'My Agents', path: 'agents' },
-    { label: 'My Manager', path: 'manager' },
+    { label: 'Dashboard', path: 'dashboard' },
+    { label: 'Your Agent', path: 'agent' },
+    { label: 'Bulk Calling', path: 'bulk-calling' },
     { label: 'My Profile', path: 'profile' },
     { label: 'Settings', path: 'settings' },
 ]
 
-/** The one vertical navbar shared by Dashboard, MyAgents, MyManager, ProfilePage and Settings. */
+/** The one vertical navbar shared by every signed-in page. */
 export default function Navbar({ uid }) {
     return (
         <nav className="navbar" aria-label="Main">

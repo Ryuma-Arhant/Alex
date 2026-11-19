@@ -1,4 +1,4 @@
-from decimal import Decimal
+from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -34,14 +34,13 @@ class AuthConfigOut(BaseModel):
     google: bool
 
 
-class AgentIn(BaseModel):
+class AgentNameIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    role_behavior: str = Field(min_length=10, max_length=6000)
 
-    @field_validator("name", "role_behavior")
+    @field_validator("name")
     @classmethod
     def _strip(cls, v: str) -> str:
-        v = v.strip()
+        v = " ".join(v.split())
         if not v:
             raise ValueError("must not be blank")
         return v
@@ -50,15 +49,7 @@ class AgentIn(BaseModel):
 class AgentOut(BaseModel):
     aid: str
     name: str
-    role_behavior: str
+    role: str
     status: str  # free | busy (derived from live calls)
-    lifecycle: str  # PENDING | ACTIVE
-
-
-class PaymentIn(BaseModel):
-    amount: Decimal = Field(ge=0, le=Decimal("1000000"), decimal_places=2)
-
-
-class ManagerOut(BaseModel):
-    mid: str
-    uid: str
+    system_prompt: str
+    created_at: datetime

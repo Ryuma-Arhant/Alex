@@ -1,5 +1,5 @@
 import { useNavigate, useOutletContext } from 'react-router-dom'
-import GraphBox from '../components/Dashboard/GraphBox'
+import CallsGraph from '../components/Dashboard/CallsGraph'
 import ProfileIcon from '../components/Auth/ProfileIcon'
 
 export default function Dashboard() {
@@ -18,7 +18,7 @@ export default function Dashboard() {
                 </button>
             </div>
             <div className="page-body">
-                <GraphBox uid={me.uid} />
+                <CallsGraph uid={me.uid} />
             </div>
         </div>
     )

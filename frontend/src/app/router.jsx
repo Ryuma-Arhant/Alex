@@ -1,18 +1,14 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import AppLayout from '../components/AppLayout/AppLayout'
 import RequireAuth from '../components/Auth/RequireAuth'
-import AgentCreater from '../pages/AgentCreater'
-import AgentUpdater from '../pages/AgentUpdater'
+import BulkCalling from '../pages/BulkCalling'
 import CallPage from '../pages/CallPage'
-import ChatPage from '../pages/ChatPage'
 import CheckinPage from '../pages/CheckinPage'
-import Landing from '../pages/Landing'
 import Dashboard from '../pages/Dashboard'
-import MyAgents from '../pages/MyAgents'
-import MyManager from '../pages/MyManager'
-import Payment from '../pages/Payment'
+import Landing from '../pages/Landing'
 import ProfilePage from '../pages/ProfilePage'
 import Settings from '../pages/Settings'
+import YourAgent from '../pages/YourAgent'
 
 export const routes = [
     { path: '/', element: <Navigate to="/home" replace /> },
@@ -25,22 +21,13 @@ export const routes = [
                 element: <AppLayout />,
                 children: [
                     { path: '/dashboard/:uid', element: <Dashboard /> },
-                    { path: '/agents/:uid', element: <MyAgents /> },
-                    {
-                        path: '/manager/:uid',
-                        element: <MyManager />,
-                        children: [
-                            { index: true, element: <CallPage /> },
-                            { path: 'chats/:id', element: <ChatPage /> },
-                        ],
-                    },
+                    { path: '/agent/:uid', element: <YourAgent /> },
+                    { path: '/call/:uid', element: <CallPage /> },
+                    { path: '/bulk-calling/:uid', element: <BulkCalling /> },
                     { path: '/profile/:uid', element: <ProfilePage /> },
                     { path: '/settings/:uid', element: <Settings /> },
                 ],
             },
-            { path: '/create_agent/:uid', element: <AgentCreater /> },
-            { path: '/create_agent/:uid/:aid', element: <Payment /> },
-            { path: '/agents/:uid/update/:aid', element: <AgentUpdater /> },
         ],
     },
     { path: '*', element: <Navigate to="/home" replace /> },

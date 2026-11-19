@@ -49,7 +49,7 @@ export const errorMessage = (err, fallback = 'Something went wrong. Please try a
 export const api = createApi({
   reducerPath: 'api',
   baseQuery,
-  tagTypes: ['Profile', 'Calls', 'Me', 'Agents', 'Usage', 'ScreenTime'],
+  tagTypes: ['Me', 'Agent', 'CallsPerDay', 'ScreenTime', 'Call'],
   endpoints: (b) => ({
     // --- auth / user ---
     authConfig: b.query({ query: () => '/auth/config' }),
@@ -72,37 +72,36 @@ export const api = createApi({
       }),
       invalidatesTags: ['Me'],
     }),
-    // --- agents ---
-    listAgents: b.query({ query: (uid) => `/users/${uid}/agents`, providesTags: ['Agents'] }),
-    getAgent: b.query({ query: ({ uid, aid }) => `/users/${uid}/agents/${aid}`, providesTags: ['Agents'] }),
+    // --- the user's single agent (null when there is none) ---
+    getAgent: b.query({ query: (uid) => `/users/${uid}/agent`, providesTags: ['Agent'] }),
     createAgent: b.mutation({
-      query: ({ uid, ...body }) => ({ url: `/users/${uid}/agents`, method: 'POST', body }),
+      query: ({ uid, name }) => ({ url: `/users/${uid}/agent`, method: 'POST', body: { name } }),
+      invalidatesTags: ['Agent', 'Me', 'CallsPerDay'],
     }),
-    payAgent: b.mutation({
-      query: ({ uid, aid, amount }) => ({
-        url: `/users/${uid}/agents/${aid}/payment`,
-        method: 'POST',
-        body: { amount },
-      }),
-      invalidatesTags: ['Agents', 'Me'],
+    renameAgent: b.mutation({
+      query: ({ uid, name }) => ({ url: `/users/${uid}/agent`, method: 'PUT', body: { name } }),
+      invalidatesTags: ['Agent'],
     }),
-    updateAgent: b.mutation({
-      query: ({ uid, aid, ...body }) => ({ url: `/users/${uid}/agents/${aid}`, method: 'PUT', body }),
-      invalidatesTags: ['Agents'],
+    deleteAgent: b.mutation({
+      query: (uid) => ({ url: `/users/${uid}/agent`, method: 'DELETE' }),
+      invalidatesTags: ['Agent', 'Me', 'CallsPerDay'],
     }),
-    // --- manager ---
-    listManagerCalls: b.query({ query: (uid) => `/users/${uid}/manager/calls`, providesTags: ['Calls'] }),
-    createManagerCall: b.mutation({
-      query: (uid) => ({ url: `/users/${uid}/manager/calls`, method: 'POST' }),
-      invalidatesTags: ['Calls'],
+    // --- calls made by the agent ---
+    /** Individual call: phone, amount and client context in; a LiveKit room the browser joins out. The context is
+     * written into this call's own Loan-Recovery prompt on the server, so the agent has it before it speaks. */
+    createAgentCall: b.mutation({
+      query: ({ uid, ...body }) => ({ url: `/users/${uid}/collections/calls`, method: 'POST', body }),
+      invalidatesTags: ['Agent', 'CallsPerDay'],
     }),
-    // --- stats / screen time ---
-    getUsage: b.query({
-      query: ({ uid, metric, range, agentId }) => ({
-        url: `/users/${uid}/stats/usage`,
-        params: { metric, range, tz: browserTimeZone(), ...(agentId ? { agent_id: agentId } : {}) },
-      }),
-      providesTags: ['Usage'],
+    getCall: b.query({ query: (id) => `/calls/${id}`, providesTags: (_r, _e, id) => [{ type: 'Call', id }] }),
+    endCall: b.mutation({
+      query: (id) => ({ url: `/calls/${id}/end`, method: 'POST' }),
+      invalidatesTags: ['Agent'],
+    }),
+    // --- dashboard / screen time ---
+    getCallsPerDay: b.query({
+      query: (uid) => ({ url: `/users/${uid}/stats/calls-per-day`, params: { tz: browserTimeZone() } }),
+      providesTags: ['CallsPerDay'],
     }),
     getScreenTime: b.query({
       query: ({ uid, weekStart }) => ({
@@ -118,32 +117,15 @@ export const api = createApi({
         body: { seconds, tz: browserTimeZone() },
       }),
     }),
-    // --- existing voice-agent endpoints ---
-    getActiveProfile: b.query({
-      query: () => '/agent-profiles/active',
-      providesTags: ['Profile'],
-    }),
-    generateProfile: b.mutation({
-      query: (body) => ({ url: '/agent-profiles/generate', method: 'POST', body }),
-      invalidatesTags: ['Profile'],
-    }),
-    updateProfile: b.mutation({
-      query: ({ id, context_prompt }) => ({
-        url: `/agent-profiles/${id}`,
-        method: 'PUT',
-        body: { context_prompt },
+    // --- bulk calling ---
+    previewBulkCsv: b.mutation({
+      query: ({ uid, file }) => ({
+        url: `/users/${uid}/bulk-calls/preview`,
+        method: 'POST',
+        body: file,
+        headers: { 'Content-Type': 'text/csv' },
       }),
-      invalidatesTags: ['Profile'],
     }),
-    createCall: b.mutation({
-      query: () => ({ url: '/calls', method: 'POST', body: {} }),
-      invalidatesTags: ['Calls'],
-    }),
-    endCall: b.mutation({
-      query: (id) => ({ url: `/calls/${id}/end`, method: 'POST' }),
-    }),
-    listCalls: b.query({ query: () => '/calls', providesTags: ['Calls'] }),
-    getCall: b.query({ query: (id) => `/calls/${id}` }),
   }),
 })
 
@@ -154,20 +136,14 @@ export const {
   useLoginMutation,
   useLogoutMutation,
   useUploadAvatarMutation,
-  useListAgentsQuery,
   useGetAgentQuery,
   useCreateAgentMutation,
-  usePayAgentMutation,
-  useUpdateAgentMutation,
-  useGetUsageQuery,
-  useGetScreenTimeQuery,
-  useListManagerCallsQuery,
-  useCreateManagerCallMutation,
-  useGetActiveProfileQuery,
-  useGenerateProfileMutation,
-  useUpdateProfileMutation,
-  useCreateCallMutation,
-  useEndCallMutation,
-  useListCallsQuery,
+  useRenameAgentMutation,
+  useDeleteAgentMutation,
+  useCreateAgentCallMutation,
   useGetCallQuery,
+  useEndCallMutation,
+  useGetCallsPerDayQuery,
+  useGetScreenTimeQuery,
+  usePreviewBulkCsvMutation,
 } = api

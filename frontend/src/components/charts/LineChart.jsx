@@ -2,7 +2,7 @@ import { useId, useState } from 'react'
 
 const W = 720
 const H = 300
-const PAD = { top: 16, right: 16, bottom: 32, left: 44 }
+const BASE_PAD = { top: 16, right: 16, bottom: 32, left: 44 }
 
 /** Round tick step: 1, 2 or 5 times a power of ten (integers only when `integer`). */
 export function niceStep(max, count = 4, integer = true) {
@@ -39,8 +39,16 @@ export default function LineChart({
     highlightIndex = null,
     area = false,
     ariaLabel = 'Line chart',
+    xTitle,
+    yTitle,
 }) {
     const uid = useId()
+    // room for the optional axis titles
+    const PAD = {
+        ...BASE_PAD,
+        left: BASE_PAD.left + (yTitle ? 22 : 0),
+        bottom: BASE_PAD.bottom + (xTitle ? 22 : 0),
+    }
     const [hover, setHover] = useState(null)
     const n = labels.length
     const max = Math.max(0, ...series.flatMap((s) => s.points))
@@ -94,12 +102,31 @@ export default function LineChart({
                                 key={i}
                                 className={`chart-tick ${i === highlightIndex ? 'today' : ''}`}
                                 x={x(i)}
-                                y={H - 10}
+                                y={H - PAD.bottom + 22}
                                 textAnchor="middle"
                             >
                                 {l}
                             </text>
                         ) : null,
+                    )}
+                    {yTitle && (
+                        <text
+                            className="chart-axis-title"
+                            transform={`translate(14 ${PAD.top + ih / 2}) rotate(-90)`}
+                            textAnchor="middle"
+                        >
+                            {yTitle}
+                        </text>
+                    )}
+                    {xTitle && (
+                        <text
+                            className="chart-axis-title"
+                            x={PAD.left + iw / 2}
+                            y={H - 6}
+                            textAnchor="middle"
+                        >
+                            {xTitle}
+                        </text>
                     )}
                     {highlightIndex !== null && highlightIndex < n && (
                         <line
