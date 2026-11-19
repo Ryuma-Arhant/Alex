@@ -2,7 +2,7 @@
 
 from livekit.agents import AgentSession
 
-from voice_agent.config import get_settings
+from voice_agent.config import AgentSettings, get_settings
 from voice_agent.profile.prompt_composer import RuntimeContext
 from voice_agent.profile.schema import AgentProfileSpec
 from voice_agent.session_factory import build_agent, build_session, build_turn_handling
@@ -39,6 +39,11 @@ async def test_second_profile_builds_real_session_and_agent():
     assert isinstance(session, AgentSession)
     agent = build_agent(REMINDER, RuntimeContext("OUTBOUND", "now"), build_tools([], ToolContext(state, None)))
     assert "Remind the patient" in agent.instructions
+
+
+def test_pipeline_is_the_default_voice_mode():
+    """The Manager's STT -> LLM -> TTS pipeline is what calls use unless AGENT_VOICE_MODE says otherwise."""
+    assert AgentSettings.model_fields["agent_voice_mode"].default == "pipeline"
 
 
 async def test_realtime_mode_builds_a_gemini_live_session_without_stt_or_tts():
