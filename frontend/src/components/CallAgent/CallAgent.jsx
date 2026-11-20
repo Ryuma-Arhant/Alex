@@ -5,6 +5,7 @@ import { useAppSelector } from '../../app/hooks'
 import { selectCsvFiles, selectReadyCsvFiles } from '../../features/bulk/slice'
 import { useCall } from '../../features/call/CallProvider'
 import { formatAmount } from '../../lib/money'
+import { voiceLabel } from '../../lib/voice'
 import { LIVE } from '../CallControls/CallControls'
 import Modal, { useModalClose } from '../Modal/Modal'
 
@@ -72,7 +73,13 @@ function Field({ id, label, error, hint, children }) {
     )
 }
 
-function IndividualCallForm({ onStarted, onBusyChange }) {
+/** Which of the agent's voices its calls will use (chosen when the agent was created). */
+function VoiceNote({ voice }) {
+    const label = voiceLabel(voice)
+    return label ? <p className="muted">The agent will speak in its {label.toLowerCase()} voice.</p> : null
+}
+
+function IndividualCallForm({ onStarted, onBusyChange, voice }) {
     const close = useModalClose()
     const { start } = useCall()
     const [form, setForm] = useState({ phone: '', amount: '', context: '' })
@@ -123,6 +130,7 @@ function IndividualCallForm({ onStarted, onBusyChange }) {
             <p className="muted modal-lead">
                 Your agent will speak as if it is calling this client, using the details below.
             </p>
+            <VoiceNote voice={voice} />
             {serverError && (
                 <div className="banner error" role="alert">
                     {serverError}
@@ -202,12 +210,13 @@ function IndividualCallForm({ onStarted, onBusyChange }) {
     )
 }
 
-function IndividualCallModal({ uid, onClose }) {
+function IndividualCallModal({ uid, voice, onClose }) {
     const navigate = useNavigate()
     const [busy, setBusy] = useState(false) // while the call is being created, Escape / backdrop do not close
     return (
         <Modal title="Individual Call" onClose={onClose} busy={busy} className="call-modal">
             <IndividualCallForm
+                voice={voice}
                 onBusyChange={setBusy}
                 onStarted={() => {
                     onClose()
@@ -218,7 +227,7 @@ function IndividualCallModal({ uid, onClose }) {
     )
 }
 
-function BulkCallModal({ uid, onClose }) {
+function BulkCallModal({ uid, voice, onClose }) {
     const files = useAppSelector(selectCsvFiles)
     const ready = useAppSelector(selectReadyCsvFiles)
     return (
@@ -228,7 +237,7 @@ function BulkCallModal({ uid, onClose }) {
             className="call-modal"
         >
             {ready.length > 0 ? (
-                <BulkReady files={ready} />
+                <BulkReady files={ready} voice={voice} />
             ) : (
                 <BulkEmpty uid={uid} hasInvalid={files.length > 0} />
             )}
@@ -261,7 +270,7 @@ function BulkEmpty({ uid, hasInvalid }) {
     )
 }
 
-function BulkReady({ files }) {
+function BulkReady({ files, voice }) {
     const close = useModalClose()
     const [proceeded, setProceeded] = useState(false)
     const people = files.reduce((n, f) => n + f.result.valid, 0)
@@ -282,6 +291,7 @@ function BulkReady({ files }) {
                     </li>
                 ))}
             </ul>
+            <VoiceNote voice={voice} />
             {proceeded ? (
                 <div className="banner notice" role="status">
                     Bulk calling is not switched on yet, so no calls were placed to these {people}{' '}
@@ -306,7 +316,7 @@ function BulkReady({ files }) {
  * "Call Agent" next to the agent tile: a two-item menu (Individual Call / Bulk Call), each opening its pop-up. While
  * a call is live in this tab it becomes a way back to that call instead, so a second call cannot be started.
  */
-export default function CallAgent({ uid }) {
+export default function CallAgent({ uid, voice }) {
     const status = useAppSelector((s) => s.call.status)
     const [menu, setMenu] = useState(false)
     const [dialog, setDialog] = useState(null) // 'individual' | 'bulk' | null
@@ -382,8 +392,10 @@ export default function CallAgent({ uid }) {
                     </button>
                 </div>
             )}
-            {dialog === 'individual' && <IndividualCallModal uid={uid} onClose={() => setDialog(null)} />}
-            {dialog === 'bulk' && <BulkCallModal uid={uid} onClose={() => setDialog(null)} />}
+            {dialog === 'individual' && (
+                <IndividualCallModal uid={uid} voice={voice} onClose={() => setDialog(null)} />
+            )}
+            {dialog === 'bulk' && <BulkCallModal uid={uid} voice={voice} onClose={() => setDialog(null)} />}
         </div>
     )
 }

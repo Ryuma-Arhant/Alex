@@ -15,6 +15,7 @@ const AGENT = {
     aid: 'a1',
     name: 'Ava',
     role: 'Loan-Recovery Agent',
+    voice: 'male',
     status: 'free',
     system_prompt: 'You are Ava, a Loan-Recovery Agent.\n# Conduct',
     created_at: '2026-11-18T10:00:00Z',
@@ -54,7 +55,9 @@ function agentBackend(initial = null, extra = {}) {
         ...base,
         'GET /users/u1/agent': () => json(agent),
         'POST /users/u1/agent': async (req) => {
-            agent = { ...AGENT, name: (await req.json()).name }
+            const body = await req.json()
+            seen.created = body
+            agent = { ...AGENT, name: body.name, voice: body.voice }
             return json(agent, 201)
         },
         'PUT /users/u1/agent': async (req) => {
@@ -97,6 +100,10 @@ describe('your agent: no agent yet (state A)', () => {
         const dialog = screen.getByRole('dialog')
         expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled() // empty name
         await userEvent.type(within(dialog).getByLabelText('Name'), '  Ava ')
+        expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled() // no voice yet
+        await userEvent.click(within(dialog).getByRole('radio', { name: 'Female' }))
+        expect(within(dialog).getByRole('radio', { name: 'Female' })).toHaveAttribute('aria-checked', 'true')
+        expect(within(dialog).getByRole('radio', { name: 'Male' })).toHaveAttribute('aria-checked', 'false')
         await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
         const tile = await screen.findByRole('button', { name: /^Ava, Free/ })
         expect(screen.queryByRole('dialog')).toBeNull()
@@ -104,7 +111,8 @@ describe('your agent: no agent yet (state A)', () => {
         expect(within(tile).getByText('Free')).toHaveClass('agent-tile-status', 'free')
         expect(tile.querySelector('.status-dot.free')).not.toBeNull()
         expect(screen.queryByRole('button', { name: '+ Create Agent' })).toBeNull()
-        expect(seen.filter((c) => c.key === 'POST /users/u1/agent')).toHaveLength(1) // the name was sent trimmed
+        expect(seen.filter((c) => c.key === 'POST /users/u1/agent')).toHaveLength(1)
+        expect(seen.created).toEqual({ name: 'Ava', voice: 'female' }) // name trimmed, voice as chosen
     })
 
     it('shows the server error inside the pop-up', async () => {
@@ -114,6 +122,7 @@ describe('your agent: no agent yet (state A)', () => {
         renderAt('/agent/u1')
         await userEvent.click(await screen.findByRole('button', { name: '+ Create Agent' }))
         await userEvent.type(screen.getByLabelText('Name'), 'Ava')
+        await userEvent.click(screen.getByRole('radio', { name: 'Male' }))
         await userEvent.click(screen.getByRole('button', { name: 'Create' }))
         expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent(
             'already have an agent',
@@ -136,6 +145,7 @@ describe('your agent: the agent tile and details', () => {
         await userEvent.click(await screen.findByRole('button', { name: /^Ava, Free/ }))
         expect(screen.queryByRole('button', { name: /^Ava, Free/ })).toBeNull()
         expect(screen.getByRole('heading', { name: 'Ava' })).toBeInTheDocument()
+        expect(screen.getByText('Voice').nextElementSibling).toHaveTextContent('Male')
         expect(screen.getByLabelText('System prompt')).toHaveTextContent(
             'You are Ava, a Loan-Recovery Agent.',
         )

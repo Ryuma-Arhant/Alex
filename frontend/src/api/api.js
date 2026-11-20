@@ -75,7 +75,11 @@ export const api = createApi({
     // --- the user's single agent (null when there is none) ---
     getAgent: b.query({ query: (uid) => `/users/${uid}/agent`, providesTags: ['Agent'] }),
     createAgent: b.mutation({
-      query: ({ uid, name }) => ({ url: `/users/${uid}/agent`, method: 'POST', body: { name } }),
+      query: ({ uid, name, voice }) => ({
+        url: `/users/${uid}/agent`,
+        method: 'POST',
+        body: { name, voice },
+      }),
       invalidatesTags: ['Agent', 'Me', 'CallsPerDay'],
     }),
     renameAgent: b.mutation({

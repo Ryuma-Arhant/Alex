@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -46,10 +47,18 @@ class AgentNameIn(BaseModel):
         return v
 
 
+Voice = Literal["male", "female"]
+
+
+class AgentCreateIn(AgentNameIn):
+    voice: Voice  # chosen when the agent is created; every call the agent makes speaks in it
+
+
 class AgentOut(BaseModel):
     aid: str
     name: str
     role: str
+    voice: Voice
     status: str  # free | busy (derived from live calls)
     system_prompt: str
     created_at: datetime

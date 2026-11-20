@@ -4,18 +4,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import Conflict
-from app.db.models import Call, CallLink, User
+from app.db.models import Agent, Call, CallLink, User
 from app.schemas.collections import SoloCallIn
 from app.services import agent_service, call_service, profile_service
 from app.services.collections_prompt import BorrowerDetails, build_recovery_prompt, opening_line
 
 
-def profile_fields(agent_name: str, borrower: BorrowerDetails | None) -> dict[str, object]:
-    """What the worker reads from the profile: the spoken opening and the call-ending conditions."""
+def profile_fields(agent: Agent, borrower: BorrowerDetails | None) -> dict[str, object]:
+    """What the worker reads from a call's profile: the agent's voice, the spoken opening and the call-ending
+    conditions. Every call the agent places (individual or bulk) builds its profile here."""
     return {
-        **agent_service.agent_fields(agent_name),
+        **agent_service.agent_fields(agent.name, agent.voice),
         "role_summary": "Loan recovery call",
-        "conversation_flow": {"opening": opening_line(agent_name, borrower)},
+        "conversation_flow": {"opening": opening_line(agent.name, borrower)},
     }
 
 
@@ -38,7 +39,7 @@ async def start_solo_call(s: AsyncSession, settings: Settings, user: User, body:
         s,
         user.workspace_id,
         source="loan-recovery-call",
-        fields=profile_fields(agent.name, borrower),
+        fields=profile_fields(agent, borrower),
         prompt=build_recovery_prompt(agent.name, borrower),
         model="loan-recovery",
     )

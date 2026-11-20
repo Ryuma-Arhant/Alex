@@ -9,6 +9,7 @@ import {
 } from '../api/api'
 import CallAgent from '../components/CallAgent/CallAgent'
 import Modal from '../components/Modal/Modal'
+import { VOICES, voiceLabel } from '../lib/voice'
 
 const POLL_MS = 15_000 // keeps the Free / In-Call state current while the page is open
 const STATUS = { free: 'Free', busy: 'In-Call' }
@@ -54,6 +55,78 @@ function NameModal({ title, label, initial = '', submitLabel, busyLabel, onSubmi
                     </button>
                     <button className="primary" disabled={busy || trimmed === '' || trimmed === initial}>
                         {busy ? busyLabel : submitLabel}
+                    </button>
+                </div>
+            </form>
+        </Modal>
+    )
+}
+
+/** Creating an agent asks for its name and its voice; Create stays disabled until both are given. */
+function CreateAgentModal({ onSubmit, onClose }) {
+    const [name, setName] = useState('')
+    const [voice, setVoice] = useState(null)
+    const [error, setError] = useState(null)
+    const [busy, setBusy] = useState(false)
+    const trimmed = name.trim()
+    const submit = async (e) => {
+        e.preventDefault()
+        if (!trimmed || !voice) return
+        setError(null)
+        setBusy(true)
+        try {
+            await onSubmit({ name: trimmed, voice })
+        } catch (err) {
+            setError(errorMessage(err))
+            setBusy(false)
+        }
+    }
+    return (
+        <Modal title="Create your agent" onClose={onClose} busy={busy}>
+            <form className="modal-form" onSubmit={(e) => void submit(e)}>
+                {error && (
+                    <div className="banner error" role="alert">
+                        {error}
+                    </div>
+                )}
+                <label>
+                    Name
+                    <input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        required
+                        maxLength={80}
+                        autoComplete="off"
+                    />
+                </label>
+                <div className="voice-field">
+                    <span id="agent-voice-label">Voice</span>
+                    <div
+                        role="radiogroup"
+                        aria-labelledby="agent-voice-label"
+                        aria-required="true"
+                        className="swatch-row"
+                    >
+                        {VOICES.map((v) => (
+                            <button
+                                key={v.value}
+                                type="button"
+                                role="radio"
+                                aria-checked={voice === v.value}
+                                onClick={() => setVoice(v.value)}
+                                disabled={busy}
+                            >
+                                {v.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <div className="box-actions">
+                    <button type="button" onClick={onClose} disabled={busy}>
+                        Cancel
+                    </button>
+                    <button className="primary" disabled={busy || trimmed === '' || !voice}>
+                        {busy ? 'Creating…' : 'Create'}
                     </button>
                 </div>
             </form>
@@ -118,14 +191,10 @@ function AgentHolder({ uid, agent, onOpen }) {
                     + Create Agent
                 </button>
                 {creating && (
-                    <NameModal
-                        title="Create your agent"
-                        label="Name"
-                        submitLabel="Create"
-                        busyLabel="Creating…"
+                    <CreateAgentModal
                         onClose={() => setCreating(false)}
-                        onSubmit={async (name) => {
-                            await createAgent({ uid, name }).unwrap()
+                        onSubmit={async ({ name, voice }) => {
+                            await createAgent({ uid, name, voice }).unwrap()
                             setCreating(false)
                         }}
                     />
@@ -147,7 +216,7 @@ function AgentHolder({ uid, agent, onOpen }) {
                     <span className="agent-tile-name">{agent.name}</span>
                     <span className={`agent-tile-status ${agent.status}`}>{STATUS[agent.status]}</span>
                 </button>
-                <CallAgent uid={uid} />
+                <CallAgent uid={uid} voice={agent.voice} />
             </div>
         </section>
     )
@@ -175,6 +244,10 @@ function AgentDetails({ uid, agent, onBack }) {
                     {agent.name}
                 </h2>
                 <span className="muted">{agent.role}</span>
+            </div>
+            <div className="field">
+                <span className="field-label">Voice</span>
+                <span>{voiceLabel(agent.voice)}</span>
             </div>
             <div className="field">
                 <span className="field-label" id="system-prompt-label">

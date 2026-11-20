@@ -39,6 +39,7 @@ class Agent(Base, CreatedMixin):
     uid: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.uid"), index=True)
     name: Mapped[str] = mapped_column(String(80))
     role_behavior: Mapped[str] = mapped_column(Text)  # the agent's role; always "Loan-Recovery Agent" today
+    voice: Mapped[str] = mapped_column(String(10), default="male", server_default="male")  # male | female
     lifecycle: Mapped[str] = mapped_column(String(10), default="ACTIVE")  # ACTIVE | DELETED
     profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_profiles.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

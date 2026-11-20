@@ -14,6 +14,8 @@ from app.services.collections_prompt import build_recovery_prompt, opening_line
 
 ROLE = "Loan-Recovery Agent"
 BUSY_WINDOW = timedelta(minutes=30)  # an unended call older than this is treated as a lost worker
+# The voice the user picks for their agent -> the Deepgram Aura-2 voice every one of its calls speaks in.
+VOICES = {"male": "aura-2-draco-en", "female": "aura-2-pandora-en"}  # both British English
 
 
 def agent_prompt(name: str) -> str:
@@ -21,9 +23,12 @@ def agent_prompt(name: str) -> str:
     return build_recovery_prompt(name)
 
 
-def agent_fields(name: str) -> dict[str, object]:
+def agent_fields(name: str, voice: str) -> dict[str, object]:
+    """The agent's profile fields. Every call profile (individual or bulk) starts from these, so the chosen voice
+    reaches every call the agent makes."""
     return {
         "agent_name": name,
+        "voice_id": VOICES[voice],
         "role_summary": ROLE,
         "conversation_flow": {"opening": opening_line(name, None)},
         "escalation_rules": "Offer a callback from the lender's team for anything you cannot answer.",
@@ -65,13 +70,20 @@ async def system_prompt(s: AsyncSession, agent: Agent) -> str:
     return (await profile_service.current_version(s, agent.profile_id)).context_prompt
 
 
-async def create(s: AsyncSession, user: User, name: str) -> Agent:
+async def create(s: AsyncSession, user: User, name: str, voice: str) -> Agent:
     if await get_active(s, user.uid) is not None:
         raise Conflict("You already have an agent. Delete it before creating a new one.")
     p, _ = await profile_service.create_detached(
-        s, user.workspace_id, source=ROLE, fields=agent_fields(name), prompt=agent_prompt(name), model="loan-recovery"
+        s,
+        user.workspace_id,
+        source=ROLE,
+        fields=agent_fields(name, voice),
+        prompt=agent_prompt(name),
+        model="loan-recovery",
     )
-    a = Agent(aid=uuid.uuid4(), uid=user.uid, name=name, role_behavior=ROLE, lifecycle="ACTIVE", profile_id=p.id)
+    a = Agent(
+        aid=uuid.uuid4(), uid=user.uid, name=name, role_behavior=ROLE, voice=voice, lifecycle="ACTIVE", profile_id=p.id
+    )
     s.add(a)
     await audit_service.record(
         s, "agent.created", actor="user", workspace_id=user.workspace_id, payload={"aid": str(a.aid)}
@@ -91,7 +103,12 @@ async def rename(s: AsyncSession, user: User, name: str) -> Agent:
     a.name = name
     if a.profile_id is not None:  # new immutable version (the prompt carries the name); past calls keep theirs
         await profile_service.append_version(
-            s, a.profile_id, source=ROLE, fields=agent_fields(name), prompt=agent_prompt(name), model="loan-recovery"
+            s,
+            a.profile_id,
+            source=ROLE,
+            fields=agent_fields(name, a.voice),
+            prompt=agent_prompt(name),
+            model="loan-recovery",
         )
     await audit_service.record(
         s, "agent.renamed", actor="user", workspace_id=user.workspace_id, payload={"aid": str(a.aid)}

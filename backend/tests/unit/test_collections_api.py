@@ -27,6 +27,7 @@ async def test_solo_call_builds_borrower_prompt_without_the_full_phone(client: A
     assert "ends in 3210" in prompt and "919876543210" not in prompt and "98765" not in prompt
     assert ctx["profile"]["voice_behavior"]["greeting"] == "Hello, may I speak with Ravi, please?"
     assert ctx["profile"]["voice_behavior"]["latency_profile"] == "aggressive"
+    assert ctx["profile"]["voice_behavior"]["voice_id"] == "aura-2-draco-en"  # the agent was created as male
     assert "You are Maya" in prompt
     # made by the user's agent: counted on today's bar of the dashboard graph
     days = (await client.get(f"/api/v1/users/{u['uid']}/stats/calls-per-day")).json()["days"]
@@ -79,6 +80,18 @@ async def test_individual_call_context_reaches_the_agent(client: AsyncClient) ->
     assert "ask who you are speaking with" in prompt and "the account holder" in prompt
     assert ctx["profile"]["voice_behavior"]["greeting"] == "Hello, who am I speaking with, please?"
     assert "{" not in prompt and "}" not in prompt  # every placeholder was filled
+
+
+async def test_calls_speak_in_the_voice_chosen_for_the_agent(client: AsyncClient) -> None:
+    """Male -> aura-2-draco-en, female -> aura-2-pandora-en, on every call; renaming the agent keeps the voice."""
+    u = await register(client)
+    await make_agent(client, u["uid"], "Maya", "female")
+    await client.put(f"/api/v1/users/{u['uid']}/agent", json={"name": "Meera"})
+    r = await client.post(f"/api/v1/users/{u['uid']}/collections/calls", json=BODY)
+    assert r.status_code == 200, r.text
+    ctx = (await client.get(f"/internal/calls/{r.json()['call_id']}/context", headers=INTERNAL)).json()
+    assert ctx["profile"]["voice_behavior"]["voice_id"] == "aura-2-pandora-en"
+    assert ctx["profile"]["identity"]["agent_name"] == "Meera"
 
 
 def test_client_notes_cannot_restructure_the_prompt() -> None:

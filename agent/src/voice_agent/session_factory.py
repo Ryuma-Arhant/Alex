@@ -55,7 +55,7 @@ def build_session(
         vad=vad,
         stt=build_stt(settings),
         llm=build_llm(settings),
-        tts=build_tts(settings, profile.voice_behavior.speaking_rate),
+        tts=build_tts(settings, profile.voice_behavior.speaking_rate, profile.voice_behavior.voice_id),
         turn_handling=build_turn_handling(profile, settings, build_turn_detection(settings)),
         conn_options=SessionConnectOptions(llm_conn_options=CALL_LLM_CONN_OPTIONS),
         **kwargs,

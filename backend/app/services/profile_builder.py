@@ -14,7 +14,11 @@ def build_generic_profile(v: AgentProfileVersion) -> dict[str, Any]:
             "role_summary": f.get("role_summary", ""),
         },
         "context_prompt": v.context_prompt,
-        "voice_behavior": {"greeting": flow.get("opening", ""), "latency_profile": "aggressive"},
+        "voice_behavior": {
+            "voice_id": f.get("voice_id", ""),  # empty: the worker's default voice
+            "greeting": flow.get("opening", ""),
+            "latency_profile": "aggressive",
+        },
         "allowed_tools": ["end_call"],
         "escalation_rules": {"when": [], "how": f.get("escalation_rules", "")},
         "end_conditions": list(f.get("call_ending_conditions", [])),

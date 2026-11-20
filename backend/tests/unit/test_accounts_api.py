@@ -86,11 +86,12 @@ async def test_uid_mismatch_is_403_and_csrf_enforced(client: AsyncClient, other_
     assert (await client.get(f"/api/v1/users/{b['uid']}/agent")).status_code == 403
     assert (await client.get(f"/api/v1/users/{a['uid']}/agent")).status_code == 200
     del client.headers["X-CSRF-Token"]
-    assert (await client.post(f"/api/v1/users/{a['uid']}/agent", json={"name": "X"})).status_code == 403
+    body = {"name": "X", "voice": "male"}
+    assert (await client.post(f"/api/v1/users/{a['uid']}/agent", json=body)).status_code == 403
 
 
-async def make_agent(c: AsyncClient, uid: str, name: str = "Ava") -> dict[str, Any]:
-    r = await c.post(f"/api/v1/users/{uid}/agent", json={"name": name})
+async def make_agent(c: AsyncClient, uid: str, name: str = "Ava", voice: str = "male") -> dict[str, Any]:
+    r = await c.post(f"/api/v1/users/{uid}/agent", json={"name": name, "voice": voice})
     assert r.status_code == 201, r.text
     return r.json()  # type: ignore[no-any-return]
 
@@ -106,7 +107,7 @@ async def test_single_agent_lifecycle(client: AsyncClient) -> None:
     assert (await client.get(url)).json()["aid"] == a["aid"]
     assert (await client.get("/api/v1/auth/me")).json()["agent_count"] == 1
     # only one agent at a time
-    dup = await client.post(url, json={"name": "Second"})
+    dup = await client.post(url, json={"name": "Second", "voice": "female"})
     assert dup.status_code == 409
     for bad in ({"name": ""}, {"name": "   "}, {"name": "x" * 81}, {}):
         assert (await client.post(url, json=bad)).status_code in (409, 422)
@@ -122,6 +123,16 @@ async def test_single_agent_lifecycle(client: AsyncClient) -> None:
     assert (await client.delete(url)).status_code == 404
     b = await make_agent(client, u["uid"], "Ben")
     assert b["aid"] != a["aid"]
+
+
+async def test_agent_voice_is_chosen_at_creation_and_kept(client: AsyncClient) -> None:
+    u = await register(client)
+    url = f"/api/v1/users/{u['uid']}/agent"
+    for bad in ({"name": "Ava"}, {"name": "Ava", "voice": "robot"}, {"name": "Ava", "voice": ""}):
+        assert (await client.post(url, json=bad)).status_code == 422, bad
+    a = await make_agent(client, u["uid"], "Ava", "female")
+    assert a["voice"] == "female" and (await client.get(url)).json()["voice"] == "female"
+    assert (await client.put(url, json={"name": "Maya"})).json()["voice"] == "female"  # renaming keeps it
 
 
 async def test_every_agent_shares_the_same_prompt(client: AsyncClient, other_client: AsyncClient) -> None:

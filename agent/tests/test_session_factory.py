@@ -78,3 +78,13 @@ async def test_pipeline_llm_deadline_covers_a_slow_reply():
     session = build_session(REMINDER, s, vad=None, userdata=CallState("c", "k"))
     opts = session.conn_options.llm_conn_options
     assert opts.timeout >= 30 and opts.max_retry == 1
+
+
+async def test_call_speaks_in_its_agents_voice():
+    """The voice chosen for the agent (sent per call as voice_id) wins; TTS_MODEL is only the fallback."""
+    s = get_settings().model_copy(update={"agent_voice_mode": "pipeline", "tts_model": "aura-2-draco-en"})
+    female = REMINDER.model_copy(
+        update={"voice_behavior": REMINDER.voice_behavior.model_copy(update={"voice_id": "aura-2-pandora-en"})}
+    )
+    assert build_session(female, s, vad=None, userdata=CallState("c", "k")).tts.model == "aura-2-pandora-en"
+    assert build_session(REMINDER, s, vad=None, userdata=CallState("c", "k")).tts.model == "aura-2-draco-en"

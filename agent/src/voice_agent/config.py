@@ -45,7 +45,7 @@ class AgentSettings(BaseSettings):
     stt_provider: Literal["deepgram"] = "deepgram"
     tts_provider: Literal["deepgram"] = "deepgram"
     stt_model: str = "nova-3"
-    tts_model: str = "aura-2-andromeda-en"
+    tts_model: str = "aura-2-draco-en"
 
     latency_profile: Literal["aggressive", "balanced", "conservative"] = "balanced"
     turn_detection: Literal["semantic", "vad", "stt"] = "semantic"

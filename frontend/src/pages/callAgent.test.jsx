@@ -37,6 +37,7 @@ const AGENT = {
     aid: 'a1',
     name: 'Ava',
     role: 'Loan-Recovery Agent',
+    voice: 'male',
     status: 'free',
     system_prompt: 'You are Ava, a Loan-Recovery Agent.',
     created_at: '2026-11-18T10:00:00Z',
@@ -159,6 +160,7 @@ describe('individual call', () => {
         expect(within(dialog).getByLabelText('Phone number')).toHaveFocus()
         expect(within(dialog).getByLabelText('Pending amount')).toBeInTheDocument()
         expect(within(dialog).getByLabelText('Call context').tagName).toBe('TEXTAREA')
+        expect(within(dialog).getByText('The agent will speak in its male voice.')).toBeInTheDocument()
         await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
         expect(screen.queryByRole('dialog')).toBeNull()
         expect(screen.getByRole('button', { name: /^Ava, Free/ })).toBeInTheDocument()
@@ -323,9 +325,12 @@ describe('bulk call', () => {
     })
 
     it('uses the file uploaded on the Bulk Calling page; Proceed places no calls, Cancel closes', async () => {
-        const seen = backend(AGENT, {
-            'POST /users/u1/bulk-calls/preview': () => json(RESULT(2, 1)),
-        })
+        const seen = backend(
+            { ...AGENT, voice: 'female' },
+            {
+                'POST /users/u1/bulk-calls/preview': () => json(RESULT(2, 1)),
+            },
+        )
         const { router } = renderAt('/bulk-calling/u1')
         await userEvent.upload(
             await screen.findByLabelText('CSV file of people to call'),
@@ -337,6 +342,7 @@ describe('bulk call', () => {
         expect(dialog).toHaveAccessibleName('Bulk Call')
         expect(within(dialog).getByText('october.csv')).toBeInTheDocument()
         expect(within(dialog).getByText(/2 people ready · 1 with errors/)).toBeInTheDocument()
+        expect(within(dialog).getByText('The agent will speak in its female voice.')).toBeInTheDocument()
         const before = seen.length
         await userEvent.click(within(dialog).getByRole('button', { name: 'Proceed with the bulk call' }))
         expect(within(dialog).getByRole('status')).toHaveTextContent('no calls were placed')
