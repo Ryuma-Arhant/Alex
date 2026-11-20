@@ -3,13 +3,14 @@
 from typing import Any
 
 from livekit.agents import Agent, AgentSession
+from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.agents.voice.turn import TurnHandlingOptions
 
 from voice_agent.config import AgentSettings
 from voice_agent.profile.prompt_composer import RuntimeContext, compose_instructions
 from voice_agent.profile.schema import AgentProfileSpec
 from voice_agent.providers.live import build_realtime_model
-from voice_agent.providers.llm import build_llm
+from voice_agent.providers.llm import CALL_LLM_CONN_OPTIONS, build_llm
 from voice_agent.providers.stt import build_stt
 from voice_agent.providers.tts import build_tts
 from voice_agent.providers.turn_detection import build_turn_detection
@@ -56,6 +57,7 @@ def build_session(
         llm=build_llm(settings),
         tts=build_tts(settings, profile.voice_behavior.speaking_rate),
         turn_handling=build_turn_handling(profile, settings, build_turn_detection(settings)),
+        conn_options=SessionConnectOptions(llm_conn_options=CALL_LLM_CONN_OPTIONS),
         **kwargs,
     )
 

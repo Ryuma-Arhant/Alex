@@ -57,3 +57,24 @@ async def test_pipeline_mode_is_still_available():
     s = get_settings().model_copy(update={"agent_voice_mode": "pipeline"})
     session = build_session(REMINDER, s, vad=None, userdata=CallState("c", "k"))
     assert session.stt is not None and session.tts is not None
+
+
+def test_one_prewarmed_process_in_production(monkeypatch):
+    """Each pre-warmed process holds its own models; the framework default (one per CPU) overflowed a 1 GB host."""
+    from livekit.agents.worker import ServerEnvOption
+
+    from voice_agent.worker import idle_processes
+
+    monkeypatch.delenv("AGENT_IDLE_PROCESSES", raising=False)
+    opt = idle_processes()
+    assert ServerEnvOption.getvalue(opt, devmode=False) == 1 and ServerEnvOption.getvalue(opt, devmode=True) == 0
+    monkeypatch.setenv("AGENT_IDLE_PROCESSES", "3")
+    assert idle_processes() == 3
+
+
+async def test_pipeline_llm_deadline_covers_a_slow_reply():
+    """A 10s deadline (the framework default) cut Gemini replies off mid-sentence with 504 DEADLINE_EXCEEDED."""
+    s = get_settings().model_copy(update={"agent_voice_mode": "pipeline"})
+    session = build_session(REMINDER, s, vad=None, userdata=CallState("c", "k"))
+    opts = session.conn_options.llm_conn_options
+    assert opts.timeout >= 30 and opts.max_retry == 1

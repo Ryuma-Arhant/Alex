@@ -9,6 +9,7 @@ import time
 from dotenv import find_dotenv, load_dotenv
 from livekit.agents import AgentSession, JobContext, JobProcess, WorkerOptions, cli
 from livekit.agents.voice import room_io
+from livekit.agents.worker import ServerEnvOption
 
 from voice_agent.backend_client import BackendClient
 from voice_agent.config import get_settings
@@ -25,6 +26,15 @@ from voice_agent.tools.registry import build_tools
 
 log = logging.getLogger("worker")
 MAX_CONSECUTIVE_FAILURES = 3
+
+
+def idle_processes() -> int | ServerEnvOption[int]:
+    """Pre-warmed call processes kept ready (AGENT_IDLE_PROCESSES overrides). The framework's production default is
+    one per CPU (up to 4), each holding its own copy of the models: on a 1 GB host that leaves no room for a live
+    call, and the kernel kills call processes mid-conversation. One is enough to answer the next call instantly;
+    a replacement is warmed as soon as it is taken. Dev mode keeps the framework's on-demand behaviour."""
+    raw = os.environ.get("AGENT_IDLE_PROCESSES", "").strip()
+    return int(raw) if raw else ServerEnvOption(dev_default=0, prod_default=1)
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -190,6 +200,7 @@ def main() -> None:
             prewarm_fnc=prewarm,
             agent_name=os.environ.get("AGENT_NAME", "voice-agent"),
             shutdown_process_timeout=60.0,  # summary generation must fit (default 10s is too short)
+            num_idle_processes=idle_processes(),
         )
     )
 

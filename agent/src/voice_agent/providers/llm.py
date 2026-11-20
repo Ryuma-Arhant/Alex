@@ -1,10 +1,17 @@
-from livekit.agents import llm
+from livekit.agents import APIConnectOptions, llm
 from livekit.plugins import google
 
 from voice_agent.config import AgentSettings
 
 # Gemini rejects request deadlines under 10s with HTTP 400 (found the hard way), so never go below this.
 ATTEMPT_TIMEOUT_S = 15.0
+
+# Connection options for the call LLM. The Gemini plugin turns `timeout` into the server deadline for the *whole*
+# streamed reply, not just its first token. The framework default (10s, 3 retries) cut replies off mid-sentence with
+# 504 DEADLINE_EXCEEDED whenever Gemini was slow to start, then kept the caller in silence through the retries, and
+# three such failures in a row ended the call. A generous deadline lets a slow reply finish; one quick retry covers
+# a transient error without a long silence.
+CALL_LLM_CONN_OPTIONS = APIConnectOptions(max_retry=1, retry_interval=1.0, timeout=30.0)
 
 
 def model_chain(primary: str, fallbacks: str) -> list[str]:
