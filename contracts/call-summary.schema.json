@@ -5,7 +5,7 @@
   "additionalProperties": true,
   "required": ["title", "summary", "call_outcome", "key_points", "user_requests",
                "agent_commitments_and_next_actions", "unresolved_items", "information_collected",
-               "sentiment", "escalation_needed", "escalation_reason",
+               "sentiment", "escalation_needed", "escalation_reason", "promise_to_pay",
                "topics_outside_scope_raised", "confidence_notes"],
   "properties": {
     "title": {"type": "string", "minLength": 1, "maxLength": 60},
@@ -24,6 +24,7 @@
     "sentiment": {"type": "string"},
     "escalation_needed": {"type": "boolean"},
     "escalation_reason": {"type": ["string", "null"]},
+    "promise_to_pay": {"type": "boolean"},
     "topics_outside_scope_raised": {"type": "array", "items": {"type": "string"}},
     "confidence_notes": {"type": "string"}
   }

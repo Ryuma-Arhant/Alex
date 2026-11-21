@@ -5,6 +5,7 @@ export const initialState = {
   muted: false,
   currentCallId: null,
   error: null,
+  connectedAt: null, // ms timestamp of the first 'connected' of this call (the Live timer counts from it)
 }
 export const callSlice = createSlice({
   name: 'call',
@@ -15,8 +16,12 @@ export const callSlice = createSlice({
       status: 'connecting',
       currentCallId: a.payload,
     }),
-    statusChanged: (s, a) => {
-      s.status = a.payload
+    statusChanged: {
+      reducer: (s, a) => {
+        s.status = a.payload
+        if (a.payload === 'connected' && s.connectedAt === null) s.connectedAt = a.meta.at
+      },
+      prepare: (status) => ({ payload: status, meta: { at: Date.now() } }),
     },
     agentStateChanged: (s, a) => {
       s.agentState = a.payload

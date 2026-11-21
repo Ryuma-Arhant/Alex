@@ -13,11 +13,18 @@ from app.services.collections_prompt import BorrowerDetails, build_recovery_prom
 def profile_fields(agent: Agent, borrower: BorrowerDetails | None) -> dict[str, object]:
     """What the worker reads from a call's profile: the agent's voice, the spoken opening and the call-ending
     conditions. Every call the agent places (individual or bulk) builds its profile here."""
-    return {
+    fields: dict[str, object] = {
         **agent_service.agent_fields(agent.name, agent.voice),
         "role_summary": "Loan recovery call",
         "conversation_flow": {"opening": opening_line(agent.name, borrower)},
     }
+    if borrower is not None:  # what the Dashboard lists for the call; only the last 4 digits of the phone are kept
+        fields["borrower"] = {
+            "phone_last4": borrower.phone[-4:],
+            "amount": f"{borrower.amount:.2f}",
+            "currency": borrower.currency,
+        }
+    return fields
 
 
 async def start_solo_call(s: AsyncSession, settings: Settings, user: User, body: SoloCallIn) -> tuple[Call, str]:

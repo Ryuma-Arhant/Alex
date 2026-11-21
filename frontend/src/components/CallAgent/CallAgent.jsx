@@ -210,7 +210,7 @@ function IndividualCallForm({ onStarted, onBusyChange, voice }) {
     )
 }
 
-function IndividualCallModal({ uid, voice, onClose }) {
+export function IndividualCallModal({ uid, voice, onClose }) {
     const navigate = useNavigate()
     const [busy, setBusy] = useState(false) // while the call is being created, Escape / backdrop do not close
     return (

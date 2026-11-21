@@ -6,6 +6,7 @@ import { checkCallForm, normalizeAmount, normalizePhone } from '../components/Ca
 import { routes } from '../app/router'
 import { makeStore } from '../app/store'
 import { csvUploaded } from '../features/bulk/slice'
+import { statusChanged } from '../features/call/slice'
 
 vi.mock('./Landing', () => ({ default: () => <div /> }))
 // WebGL is not available in jsdom: keep the real sphereMode, render the mode instead of the canvas.
@@ -358,5 +359,43 @@ describe('bulk call', () => {
         // the upload is still on the Bulk Calling page when the user goes back
         await act(() => router.navigate('/bulk-calling/u1'))
         expect(await screen.findByText('october.csv')).toBeInTheDocument()
+    })
+})
+
+describe('dashboard while a call is live', () => {
+    it('shows "Live · mm:ss · Return to call" and "Start a call" leads back to the call', async () => {
+        backend(AGENT, {
+            'GET /users/u1/dashboard': () =>
+                json({
+                    tz: 'UTC',
+                    today: '2026-11-18',
+                    calls_today: 1,
+                    promises: { promised: 0, of: 0 },
+                    reply_seconds: null,
+                    replies: 0,
+                    need_person: 0,
+                    recent_calls: [],
+                    next_actions: [],
+                }),
+            'GET /users/u1/stats/calls-per-day': () =>
+                json({
+                    tz: 'UTC',
+                    today: '2026-11-18',
+                    days: [{ date: '2026-11-18', weekday: 'Wed', calls: 1 }],
+                }),
+        })
+        const store = makeStore()
+        store.dispatch(statusChanged('connected'))
+        renderAt('/dashboard/u1', store)
+        const pill = await screen.findByRole('link', { name: /Return to call/ })
+        expect(pill).toHaveAttribute('href', '/call/u1')
+        expect(pill).toHaveTextContent(/Live · 00:0\d/)
+        expect(await screen.findByText('Ava is on a call.')).toBeInTheDocument()
+        expect(screen.getAllByRole('link', { name: 'Return to call' }).at(-1)).toHaveAttribute(
+            'href',
+            '/call/u1',
+        )
+        const nav = screen.getByRole('navigation', { name: 'Main' })
+        expect(within(nav).getByText('In a call')).toBeInTheDocument()
     })
 })

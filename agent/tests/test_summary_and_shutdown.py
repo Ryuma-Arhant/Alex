@@ -20,6 +20,7 @@ GOOD = {
     "sentiment": "neutral",
     "escalation_needed": False,
     "escalation_reason": None,
+    "promise_to_pay": False,
     "topics_outside_scope_raised": [],
     "confidence_notes": "",
 }

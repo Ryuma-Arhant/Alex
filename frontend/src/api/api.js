@@ -49,7 +49,7 @@ export const errorMessage = (err, fallback = 'Something went wrong. Please try a
 export const api = createApi({
   reducerPath: 'api',
   baseQuery,
-  tagTypes: ['Me', 'Agent', 'CallsPerDay', 'ScreenTime', 'Call'],
+  tagTypes: ['Me', 'Agent', 'CallsPerDay', 'ScreenTime', 'Call', 'Dashboard'],
   endpoints: (b) => ({
     // --- auth / user ---
     authConfig: b.query({ query: () => '/auth/config' }),
@@ -80,7 +80,7 @@ export const api = createApi({
         method: 'POST',
         body: { name, voice },
       }),
-      invalidatesTags: ['Agent', 'Me', 'CallsPerDay'],
+      invalidatesTags: ['Agent', 'Me', 'CallsPerDay', 'Dashboard'],
     }),
     renameAgent: b.mutation({
       query: ({ uid, name }) => ({ url: `/users/${uid}/agent`, method: 'PUT', body: { name } }),
@@ -88,24 +88,50 @@ export const api = createApi({
     }),
     deleteAgent: b.mutation({
       query: (uid) => ({ url: `/users/${uid}/agent`, method: 'DELETE' }),
-      invalidatesTags: ['Agent', 'Me', 'CallsPerDay'],
+      invalidatesTags: ['Agent', 'Me', 'CallsPerDay', 'Dashboard'],
     }),
     // --- calls made by the agent ---
     /** Individual call: phone, amount and client context in; a LiveKit room the browser joins out. The context is
      * written into this call's own Loan-Recovery prompt on the server, so the agent has it before it speaks. */
     createAgentCall: b.mutation({
       query: ({ uid, ...body }) => ({ url: `/users/${uid}/collections/calls`, method: 'POST', body }),
-      invalidatesTags: ['Agent', 'CallsPerDay'],
+      invalidatesTags: ['Agent', 'CallsPerDay', 'Dashboard'],
     }),
     getCall: b.query({ query: (id) => `/calls/${id}`, providesTags: (_r, _e, id) => [{ type: 'Call', id }] }),
     endCall: b.mutation({
       query: (id) => ({ url: `/calls/${id}/end`, method: 'POST' }),
-      invalidatesTags: ['Agent'],
+      invalidatesTags: ['Agent', 'Dashboard'],
     }),
     // --- dashboard / screen time ---
     getCallsPerDay: b.query({
       query: (uid) => ({ url: `/users/${uid}/stats/calls-per-day`, params: { tz: browserTimeZone() } }),
       providesTags: ['CallsPerDay'],
+    }),
+    /** Today's figures, the agent's recent calls and today's next actions (all from real calls). */
+    getDashboard: b.query({
+      query: (uid) => ({ url: `/users/${uid}/dashboard`, params: { tz: browserTimeZone() } }),
+      providesTags: ['Dashboard'],
+    }),
+    /** Ticks a next action off (or back on). The list updates at once and rolls back if the server refuses. */
+    setNextActionDone: b.mutation({
+      query: ({ uid, callId, index, done }) => ({
+        url: `/users/${uid}/dashboard/next-actions/${callId}/${index}`,
+        method: 'PUT',
+        body: { done },
+      }),
+      async onQueryStarted({ uid, callId, index, done }, { dispatch, queryFulfilled }) {
+        const patch = dispatch(
+          api.util.updateQueryData('getDashboard', uid, (d) => {
+            const a = d.next_actions.find((x) => x.call_id === callId && x.index === index)
+            if (a) a.done = done
+          }),
+        )
+        try {
+          await queryFulfilled
+        } catch {
+          patch.undo()
+        }
+      },
     }),
     getScreenTime: b.query({
       query: ({ uid, weekStart }) => ({
@@ -148,6 +174,8 @@ export const {
   useGetCallQuery,
   useEndCallMutation,
   useGetCallsPerDayQuery,
+  useGetDashboardQuery,
+  useSetNextActionDoneMutation,
   useGetScreenTimeQuery,
   usePreviewBulkCsvMutation,
 } = api

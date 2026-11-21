@@ -62,3 +62,13 @@ class ScreenTimeDaily(Base):
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     seconds: Mapped[int] = mapped_column(Integer, default=0)
     last_beat_at: Mapped[datetime | None] = mapped_column(nullable=True)  # caps credit to elapsed time
+
+
+class NextActionDone(Base, CreatedMixin):
+    """A next action from a call summary that the user ticked off on the Dashboard. A row means "done"; unticking
+    deletes it. `idx` is the action's position in the summary's agent_commitments_and_next_actions list."""
+
+    __tablename__ = "next_action_done"
+    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calls.id"), primary_key=True)
+    idx: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uid: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.uid"), index=True)

@@ -98,6 +98,7 @@ async def run_fallback(s: AsyncSession, call_id: uuid.UUID, generator: JsonGener
             "sentiment": "unknown",
             "escalation_needed": False,
             "escalation_reason": None,
+            "promise_to_pay": False,
             "topics_outside_scope_raised": [],
             "confidence_notes": "No transcript turns were recorded.",
         }
