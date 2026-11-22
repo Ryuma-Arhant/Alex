@@ -8,7 +8,7 @@ structured post-call summary. STT → LLM → TTS pipeline (Deepgram → Gemini 
 |---|---|
 | 1 Foundation | Done, verified (compose stack, migrations, tests) |
 | 2 Core voice + Web UI | Working end to end (browser call, live transcript, post-call summary, chat titles) |
-| 3–6 | Not started |
+| 3–6 | Started |
 
 Latency is measured per turn but not yet tuned (about 1.6–1.9 s from end of speech to the agent's reply; the
 target is under 800 ms). See `docs/adr/` for decisions.
