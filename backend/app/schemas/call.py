@@ -11,7 +11,8 @@ class CreateCallRequest(BaseModel):
 class CreateCallResponse(BaseModel):
     call_id: str
     livekit_url: str
-    token: str
+    token: str  # phone calls: listen-only (the browser follows the call; the agent talks to the borrower)
+    mode: str = "web"  # web | phone
 
 
 class TurnIn(BaseModel):

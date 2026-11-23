@@ -22,6 +22,6 @@ async def start_solo_call(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> CreateCallResponse:
-    """Solo call: borrower name, phone, amount and bank in, a ready-to-join call out."""
+    """Individual call: the borrower's details in, a ready-to-join call out (phone mode: one to follow)."""
     call, token = await collections_service.start_solo_call(session, settings, user, body)
-    return CreateCallResponse(call_id=str(call.id), livekit_url=settings.livekit_url, token=token)
+    return CreateCallResponse(call_id=str(call.id), livekit_url=settings.livekit_url, token=token, mode=body.mode)

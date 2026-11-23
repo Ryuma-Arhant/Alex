@@ -33,6 +33,7 @@ class UserOut(BaseModel):
 
 class AuthConfigOut(BaseModel):
     google: bool
+    phone_calls: bool = False  # the SIP trunk is set up: the agent can call real phone numbers
 
 
 class AgentNameIn(BaseModel):

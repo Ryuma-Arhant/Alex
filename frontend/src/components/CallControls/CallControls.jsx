@@ -12,9 +12,17 @@ const LABEL = {
     ended: 'Call ended',
     failed: 'Call failed',
 }
+// A phone call once the agent is in the room: where the borrower's phone is.
+const PHONE_LABEL = {
+    dialing: 'Calling the borrower…',
+    ringing: 'Ringing…',
+    active: 'On the phone',
+    hangup: 'The borrower hung up',
+}
 export const LIVE = ['connecting', 'waiting_for_agent', 'connected', 'reconnecting']
 export default function CallControls({ backTo }) {
-    const { status, muted, error } = useAppSelector((s) => s.call)
+    const { status, muted, error, mode, phoneStatus } = useAppSelector((s) => s.call)
+    const phone = mode === 'phone'
     const { client, start, end, setMuted } = useCall()
     const [restartError, setRestartError] = useState(null)
     const [restarting, setRestarting] = useState(false)
@@ -40,7 +48,11 @@ export default function CallControls({ backTo }) {
             )}
             <div className="row">
                 <span className={`dot ${status}`} aria-hidden />{' '}
-                <span aria-live="polite">{LABEL[status]}</span>
+                <span aria-live="polite">
+                    {phone && status === 'connected'
+                        ? (PHONE_LABEL[phoneStatus] ?? PHONE_LABEL.dialing)
+                        : LABEL[status]}
+                </span>
             </div>
             <div className="row">
                 {!live && (
@@ -61,9 +73,11 @@ export default function CallControls({ backTo }) {
                 )}
                 {live && (
                     <>
-                        <button onClick={() => void setMuted(!muted)} aria-pressed={muted}>
-                            {muted ? 'Unmute' : 'Mute'}
-                        </button>
+                        {!phone && (
+                            <button onClick={() => void setMuted(!muted)} aria-pressed={muted}>
+                                {muted ? 'Unmute' : 'Mute'}
+                            </button>
+                        )}
                         <button className="danger" onClick={() => void end()}>
                             End call
                         </button>

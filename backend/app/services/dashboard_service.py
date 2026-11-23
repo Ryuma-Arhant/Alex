@@ -51,6 +51,8 @@ def _recent(call: Call, summary: CallSummary | None, fields: dict[str, Any], now
         "amount": borrower.get("amount"),
         "currency": borrower.get("currency"),
         "status": _status(call, now),
+        "phone": call.direction == "OUTBOUND",  # a real phone call (otherwise a call in the browser)
+        "end_reason": call.end_reason,  # phone calls that were not answered: busy, no_answer, declined, ...
         "outcome": s.get("call_outcome"),
         "promise_to_pay": s.get("promise_to_pay"),  # absent on summaries written before it was recorded
         "escalation_needed": bool(s.get("escalation_needed", False)),

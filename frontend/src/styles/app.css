@@ -1661,3 +1661,6 @@ a.button.primary.dash-cta {
   color: var(--on-accent);
   border-color: transparent;
 }
+.bulk-queue .strong {
+  font-weight: 600;
+}

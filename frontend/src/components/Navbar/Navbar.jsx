@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { useGetAgentQuery } from '../../api/api'
+import { useAuthConfigQuery, useGetAgentQuery } from '../../api/api'
 import { useAppSelector } from '../../app/hooks'
 import { LIVE } from '../CallControls/CallControls'
 
@@ -46,7 +46,7 @@ export const NAV_ITEMS = [
     { label: 'Dashboard', path: 'dashboard', icon: 'dashboard' },
     { label: 'Your agent', path: 'agent', icon: 'agent' },
     { label: 'Calls', path: null, icon: 'calls', badge: 'Soon' },
-    { label: 'Bulk calling', path: 'bulk-calling', icon: 'bulk', badge: 'Soon' },
+    { label: 'Bulk calling', path: 'bulk-calling', icon: 'bulk', badge: 'Soon', liveWithPhoneCalls: true },
     { label: 'Profile', path: 'profile', icon: 'profile' },
     { label: 'Settings', path: 'settings', icon: 'settings' },
 ]
@@ -100,6 +100,7 @@ function AgentCard({ uid }) {
 
 /** The one vertical navbar shared by every signed-in page. */
 export default function Navbar({ uid }) {
+    const phoneCalls = useAuthConfigQuery().data?.phone_calls === true
     return (
         <nav className="navbar" aria-label="Main">
             <div className="nav-brand">
@@ -111,7 +112,9 @@ export default function Navbar({ uid }) {
                     <>
                         <NavIcon name={i.icon} />
                         <span>{i.label}</span>
-                        {i.badge && <span className="nav-badge">{i.badge}</span>}
+                        {i.badge && !(i.liveWithPhoneCalls && phoneCalls) && (
+                            <span className="nav-badge">{i.badge}</span>
+                        )}
                     </>
                 )
                 return i.path ? (

@@ -1,9 +1,17 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { errorMessage } from '../../api/api'
+import {
+    errorMessage,
+    useAuthConfigQuery,
+    useControlBulkCallMutation,
+    useGetBulkCallQuery,
+    useStartBulkCallMutation,
+} from '../../api/api'
 import { useAppSelector } from '../../app/hooks'
+import { csvFileFor } from '../../features/bulk/files'
 import { selectCsvFiles, selectReadyCsvFiles } from '../../features/bulk/slice'
 import { useCall } from '../../features/call/CallProvider'
+import { NOT_CONNECTED } from '../../lib/callOutcome'
 import { formatAmount } from '../../lib/money'
 import { voiceLabel } from '../../lib/voice'
 import { LIVE } from '../CallControls/CallControls'
@@ -79,16 +87,32 @@ function VoiceNote({ voice }) {
     return label ? <p className="muted">The agent will speak in its {label.toLowerCase()} voice.</p> : null
 }
 
+// How an individual call is made, once phone calls are set up (until then every call is a browser call).
+const CALL_MODES = [
+    {
+        value: 'phone',
+        label: 'Call their phone',
+        hint: 'The agent rings this number. You can listen in here.',
+    },
+    {
+        value: 'web',
+        label: 'Try it in the browser',
+        hint: 'You play the client yourself, with your microphone.',
+    },
+]
+
 function IndividualCallForm({ onStarted, onBusyChange, voice }) {
     const close = useModalClose()
     const { start } = useCall()
+    const phoneCalls = useAuthConfigQuery().data?.phone_calls === true
+    const [mode, setMode] = useState('phone')
     const [form, setForm] = useState({ phone: '', amount: '', context: '' })
     const [touched, setTouched] = useState({})
     const [submitted, setSubmitted] = useState(false)
     const [busy, setBusy] = useState(false)
     const [serverError, setServerError] = useState(null)
     const inFlight = useRef(false) // set synchronously: a double click cannot start two calls
-    const ids = { phone: useId(), amount: useId(), context: useId() }
+    const ids = { phone: useId(), amount: useId(), context: useId(), mode: useId() }
     const errors = checkCallForm(form)
     const shown = (f) => (submitted || touched[f] ? errors[f] : undefined)
     const amount = normalizeAmount(form.amount)
@@ -110,6 +134,7 @@ function IndividualCallForm({ onStarted, onBusyChange, voice }) {
                 amount,
                 currency: CURRENCY,
                 context: form.context.trim(),
+                mode: phoneCalls ? mode : 'web',
             })
             if (id === null) throw new Error('busy')
             onStarted()
@@ -198,12 +223,32 @@ function IndividualCallForm({ onStarted, onBusyChange, voice }) {
                     disabled={busy}
                 />
             </Field>
+            {phoneCalls && (
+                <div className="voice-field">
+                    <span id={ids.mode}>How should the agent call?</span>
+                    <div role="radiogroup" aria-labelledby={ids.mode} className="swatch-row">
+                        {CALL_MODES.map((m) => (
+                            <button
+                                key={m.value}
+                                type="button"
+                                role="radio"
+                                aria-checked={mode === m.value}
+                                onClick={() => setMode(m.value)}
+                                disabled={busy}
+                            >
+                                {m.label}
+                            </button>
+                        ))}
+                    </div>
+                    <span className="muted field-hint">{CALL_MODES.find((m) => m.value === mode).hint}</span>
+                </div>
+            )}
             <div className="box-actions">
                 <button type="button" onClick={close} disabled={busy}>
                     Cancel
                 </button>
                 <button className="primary" disabled={busy}>
-                    {busy ? 'Starting call…' : 'Confirm Call'}
+                    {busy ? 'Starting call…' : phoneCalls && mode === 'phone' ? 'Call now' : 'Confirm Call'}
                 </button>
             </div>
         </form>
@@ -227,21 +272,128 @@ export function IndividualCallModal({ uid, voice, onClose }) {
     )
 }
 
+const BULK_POLL_MS = 3000
+const BULK_ACTIVE = ['running', 'paused']
+
 function BulkCallModal({ uid, voice, onClose }) {
     const files = useAppSelector(selectCsvFiles)
     const ready = useAppSelector(selectReadyCsvFiles)
+    const phoneCalls = useAuthConfigQuery().data?.phone_calls === true
+    const [following, setFollowing] = useState(false) // a run started from this pop-up stays shown once it ends
+    const { data: job } = useGetBulkCallQuery(uid, {
+        skip: !phoneCalls,
+        pollingInterval: following ? BULK_POLL_MS : 0,
+    })
+    const active = !!job && BULK_ACTIVE.includes(job.status)
+    useEffect(() => {
+        if (active) setFollowing(true)
+    }, [active])
+    const showProgress = !!job && (active || following)
+    const title = showProgress ? 'Bulk Call' : ready.length > 0 ? 'Bulk Call' : 'No CSV file to call'
     return (
-        <Modal
-            title={ready.length > 0 ? 'Bulk Call' : 'No CSV file to call'}
-            onClose={onClose}
-            className="call-modal"
-        >
-            {ready.length > 0 ? (
-                <BulkReady files={ready} voice={voice} />
+        <Modal title={title} onClose={onClose} className="call-modal">
+            {showProgress ? (
+                <BulkProgress uid={uid} job={job} voice={voice} />
+            ) : ready.length > 0 ? (
+                <BulkReady
+                    uid={uid}
+                    files={ready}
+                    voice={voice}
+                    phoneCalls={phoneCalls}
+                    onStarted={() => setFollowing(true)}
+                />
             ) : (
                 <BulkEmpty uid={uid} hasInvalid={files.length > 0} />
             )}
         </Modal>
+    )
+}
+
+const ITEM_STATUS = { pending: 'Waiting', calling: 'Calling now…' }
+const itemLabel = (i) =>
+    ITEM_STATUS[i.status] ??
+    (i.status === 'skipped'
+        ? 'Skipped'
+        : i.result === 'answered'
+          ? 'Answered'
+          : (NOT_CONNECTED[i.result] ?? 'Done'))
+
+/** A bulk run in progress (or just finished): who is being called, how far it got, and pause / resume / cancel. */
+function BulkProgress({ uid, job, voice }) {
+    const close = useModalClose()
+    const [control, { isLoading }] = useControlBulkCallMutation()
+    const [error, setError] = useState(null)
+    const called = job.counts.done
+    const act = async (action) => {
+        setError(null)
+        try {
+            await control({ uid, jobId: job.job_id, action }).unwrap()
+        } catch (err) {
+            setError(errorMessage(err, 'Could not change the bulk call. Please try again.'))
+        }
+    }
+    const STATUS = {
+        running: 'Calling, one person at a time.',
+        paused: 'Paused. The call in progress (if any) finishes; nobody else is called until you resume.',
+        cancelled: 'Cancelled. Nobody else will be called.',
+        done: 'Finished. Everyone in the file has been called.',
+    }
+    return (
+        <>
+            <p role="status">
+                <span className="mono">{job.file_name || 'CSV file'}</span>: {STATUS[job.status]}
+            </p>
+            <p className="muted">
+                {called} of {job.total} called · {job.answered} answered
+                {job.counts.skipped > 0 ? ` · ${job.counts.skipped} skipped` : ''}
+            </p>
+            <VoiceNote voice={voice} />
+            {error && (
+                <div className="banner error" role="alert">
+                    {error}
+                </div>
+            )}
+            <ul className="bulk-queue" aria-label="People in this bulk call">
+                {job.items.map((i) => (
+                    <li key={i.seq}>
+                        <span>
+                            {i.name} <span className="mono muted">•••• {i.phone_last4}</span>
+                        </span>
+                        <span className={i.status === 'calling' ? 'strong' : 'muted'}>{itemLabel(i)}</span>
+                    </li>
+                ))}
+            </ul>
+            <div className="box-actions">
+                <button type="button" onClick={close}>
+                    Close
+                </button>
+                {job.status === 'running' && (
+                    <button type="button" onClick={() => void act('pause')} disabled={isLoading}>
+                        Pause
+                    </button>
+                )}
+                {job.status === 'paused' && (
+                    <button
+                        type="button"
+                        className="primary"
+                        onClick={() => void act('resume')}
+                        disabled={isLoading}
+                    >
+                        Resume
+                    </button>
+                )}
+                {BULK_ACTIVE.includes(job.status) && (
+                    <button
+                        type="button"
+                        className="danger"
+                        onClick={() => void act('cancel')}
+                        disabled={isLoading}
+                    >
+                        Cancel bulk call
+                    </button>
+                )}
+            </div>
+        </>
     )
 }
 
@@ -270,10 +422,24 @@ function BulkEmpty({ uid, hasInvalid }) {
     )
 }
 
-function BulkReady({ files, voice }) {
+function BulkReady({ uid, files, voice, phoneCalls, onStarted }) {
     const close = useModalClose()
     const [proceeded, setProceeded] = useState(false)
+    const [startBulk, { isLoading }] = useStartBulkCallMutation()
+    const [error, setError] = useState(null)
     const people = files.reduce((n, f) => n + f.result.valid, 0)
+    const proceed = async () => {
+        if (!phoneCalls) return setProceeded(true) // not switched on: say so, place nothing
+        setError(null)
+        const file = csvFileFor(files[0].uploadedAt)
+        if (!file) return setError('Please upload the CSV file again on the Bulk Calling page.')
+        try {
+            await startBulk({ uid, file }).unwrap()
+            onStarted()
+        } catch (err) {
+            setError(errorMessage(err, 'Could not start the bulk call. Please try again.'))
+        }
+    }
     return (
         <>
             <p>
@@ -292,6 +458,17 @@ function BulkReady({ files, voice }) {
                 ))}
             </ul>
             <VoiceNote voice={voice} />
+            {phoneCalls && (
+                <p className="muted">
+                    The agent will phone each person in turn, one call at a time. You can pause or cancel at
+                    any time.
+                </p>
+            )}
+            {error && (
+                <div className="banner error" role="alert">
+                    {error}
+                </div>
+            )}
             {proceeded ? (
                 <div className="banner notice" role="status">
                     Bulk calling is not switched on yet, so no calls were placed to these {people}{' '}
@@ -303,8 +480,13 @@ function BulkReady({ files, voice }) {
                     {proceeded ? 'Close' : 'Cancel'}
                 </button>
                 {!proceeded && (
-                    <button type="button" className="primary" onClick={() => setProceeded(true)}>
-                        Proceed with the bulk call
+                    <button
+                        type="button"
+                        className="primary"
+                        onClick={() => void proceed()}
+                        disabled={isLoading}
+                    >
+                        {isLoading ? 'Starting…' : 'Proceed with the bulk call'}
                     </button>
                 )}
             </div>

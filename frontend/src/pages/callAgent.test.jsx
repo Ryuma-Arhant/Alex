@@ -21,8 +21,9 @@ vi.mock('../lib/livekit/roomManager', () => ({
         getLevels() {
             return { user: 0, agent: 0 }
         }
-        async connect(url, token, cb) {
+        async connect(url, token, cb, opts) {
             room.joined.push({ url, token })
+            room.opts = opts
             room.cb = cb
             cb.onStatus('connecting')
         }
@@ -217,6 +218,7 @@ describe('individual call', () => {
             amount: '12000.00',
             currency: 'INR',
             context: 'Asha Rao\nMissed the October EMI',
+            mode: 'web', // phone calls are not set up in this test
         })
         expect(room.joined).toEqual([{ url: 'wss://lk', token: 'tok-1' }]) // the room the server created for it
         expect(screen.queryByRole('dialog')).toBeNull()
@@ -397,5 +399,129 @@ describe('dashboard while a call is live', () => {
         )
         const nav = screen.getByRole('navigation', { name: 'Main' })
         expect(within(nav).getByText('In a call')).toBeInTheDocument()
+    })
+})
+
+describe('phone calls (once the Twilio trunk is set up)', () => {
+    const phoneOn = { 'GET /auth/config': () => json({ google: false, phone_calls: true }) }
+    const RESULT = (valid, invalid = 0) => ({
+        total: valid + invalid,
+        valid,
+        invalid,
+        ignored_columns: [],
+        rows: [],
+    })
+    const openBulk = async () => {
+        await userEvent.click(within(await openMenu()).getByRole('menuitem', { name: /Bulk Call/ }))
+        return screen.getByRole('dialog')
+    }
+    const fill = async (dialog) => {
+        await userEvent.type(within(dialog).getByLabelText('Phone number'), '+91 98123 45678')
+        await userEvent.type(within(dialog).getByLabelText('Pending amount'), '12000')
+        await userEvent.type(within(dialog).getByLabelText('Call context'), 'Asha Rao')
+    }
+
+    it('without the trunk there is no choice: every call is a browser call', async () => {
+        backend()
+        renderAt('/agent/u1')
+        const dialog = await openIndividual()
+        expect(within(dialog).queryByRole('radiogroup')).toBeNull()
+        expect(within(dialog).getByRole('button', { name: 'Confirm Call' })).toBeInTheDocument()
+    })
+
+    it('"Call their phone" dials the borrower and the browser only listens, showing where the phone is', async () => {
+        const seen = backend(AGENT, {
+            ...phoneOn,
+            'POST /users/u1/collections/calls': () =>
+                json({ call_id: 'c1', livekit_url: 'wss://lk', token: 'listen-1', mode: 'phone' }),
+            'GET /calls/c1': () =>
+                json({ id: 'c1', summary_status: 'READY', summary: null, end_reason: 'busy', turns: [] }),
+        })
+        renderAt('/agent/u1')
+        const dialog = await openIndividual()
+        const choice = await within(dialog).findByRole('radiogroup', { name: 'How should the agent call?' })
+        expect(within(choice).getByRole('radio', { name: 'Call their phone' })).toHaveAttribute(
+            'aria-checked',
+            'true',
+        )
+        await fill(dialog)
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Call now' }))
+
+        expect((await posts(seen)[0].req.json()).mode).toBe('phone')
+        expect(room.opts).toEqual({ listenOnly: true }) // no microphone: the agent talks to the borrower
+        expect(await screen.findByRole('heading', { name: 'Phone call' })).toBeInTheDocument()
+        act(() => room.cb.onStatus('connected'))
+        expect(screen.getByText('Calling the borrower…')).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Mute' })).toBeNull()
+        act(() => room.cb.onPhoneStatus('ringing'))
+        expect(screen.getByText('Ringing…')).toBeInTheDocument()
+        act(() => room.cb.onPhoneStatus('active'))
+        expect(screen.getByText('On the phone')).toBeInTheDocument()
+
+        // the borrower did not pick up: the agent ends the call and the page says why
+        act(() => room.cb.onDisconnected())
+        expect(await screen.findByText('The call did not connect: Busy.')).toBeInTheDocument()
+    })
+
+    it('"Try it in the browser" still makes a browser call', async () => {
+        const seen = backend(AGENT, phoneOn)
+        renderAt('/agent/u1')
+        const dialog = await openIndividual()
+        await userEvent.click(await within(dialog).findByRole('radio', { name: 'Try it in the browser' }))
+        await fill(dialog)
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm Call' }))
+        await waitFor(() => expect(posts(seen)).toHaveLength(1))
+        expect((await posts(seen)[0].req.json()).mode).toBe('web')
+        expect(room.opts).toEqual({ listenOnly: false })
+    })
+
+    it('Proceed starts the bulk call with the uploaded file, then shows its progress; Pause is sent', async () => {
+        let job = null
+        const running = {
+            job_id: 'j1',
+            status: 'running',
+            file_name: 'october.csv',
+            total: 2,
+            counts: { pending: 1, calling: 1, done: 0, skipped: 0 },
+            answered: 0,
+            items: [
+                { seq: 0, name: 'Asha Rao', phone_last4: '5678', status: 'calling', result: null },
+                { seq: 1, name: 'Ravi Kumar', phone_last4: '3210', status: 'pending', result: null },
+            ],
+        }
+        const seen = backend(AGENT, {
+            ...phoneOn,
+            'POST /users/u1/bulk-calls/preview': () => json(RESULT(2, 0)),
+            'GET /users/u1/bulk-calls/current': () => json(job),
+            'POST /users/u1/bulk-calls': () => {
+                job = running
+                return json(running, 201)
+            },
+            'POST /users/u1/bulk-calls/j1/pause': () => {
+                job = { ...running, status: 'paused' }
+                return json(job)
+            },
+        })
+        const { router } = renderAt('/bulk-calling/u1')
+        await userEvent.upload(
+            await screen.findByLabelText('CSV file of people to call'),
+            new File(['name,phone,amount,deadline\n'], 'october.csv', { type: 'text/csv' }),
+        )
+        await screen.findByRole('region', { name: 'Borrowers in the file' })
+        await act(() => router.navigate('/agent/u1'))
+        const dialog = await openBulk()
+        expect(within(dialog).getByText(/phone each person in turn/)).toBeInTheDocument()
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Proceed with the bulk call' }))
+
+        const start = seen.find((c) => c.key === 'POST /users/u1/bulk-calls')
+        expect(new URL(start.req.url).searchParams.get('file_name')).toBe('october.csv')
+        expect(await start.req.text()).toBe('name,phone,amount,deadline\n') // the uploaded bytes
+        const list = await within(dialog).findByRole('list', { name: 'People in this bulk call' })
+        expect(within(list).getByText('Calling now…')).toBeInTheDocument()
+        expect(within(list).getByText('•••• 3210')).toBeInTheDocument()
+        expect(within(dialog).getByText('0 of 2 called · 0 answered')).toBeInTheDocument()
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Pause' }))
+        expect(seen.some((c) => c.key === 'POST /users/u1/bulk-calls/j1/pause')).toBe(true)
+        expect(await within(dialog).findByRole('button', { name: 'Resume' })).toBeInTheDocument()
     })
 })

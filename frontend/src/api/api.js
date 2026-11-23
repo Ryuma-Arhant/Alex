@@ -49,7 +49,7 @@ export const errorMessage = (err, fallback = 'Something went wrong. Please try a
 export const api = createApi({
   reducerPath: 'api',
   baseQuery,
-  tagTypes: ['Me', 'Agent', 'CallsPerDay', 'ScreenTime', 'Call', 'Dashboard'],
+  tagTypes: ['Me', 'Agent', 'CallsPerDay', 'ScreenTime', 'Call', 'Dashboard', 'Bulk'],
   endpoints: (b) => ({
     // --- auth / user ---
     authConfig: b.query({ query: () => '/auth/config' }),
@@ -148,6 +148,26 @@ export const api = createApi({
       }),
     }),
     // --- bulk calling ---
+    /** Starts phoning the file's valid rows, one at a time (needs phone calls set up). */
+    startBulkCall: b.mutation({
+      query: ({ uid, file }) => ({
+        url: `/users/${uid}/bulk-calls`,
+        method: 'POST',
+        params: { file_name: file.name },
+        body: file,
+        headers: { 'Content-Type': 'text/csv' },
+      }),
+      invalidatesTags: ['Bulk', 'Agent', 'Dashboard'],
+    }),
+    /** The latest bulk run (null when there has been none), each borrower with only the last 4 digits. */
+    getBulkCall: b.query({ query: (uid) => `/users/${uid}/bulk-calls/current`, providesTags: ['Bulk'] }),
+    controlBulkCall: b.mutation({
+      query: ({ uid, jobId, action }) => ({
+        url: `/users/${uid}/bulk-calls/${jobId}/${action}`,
+        method: 'POST',
+      }),
+      invalidatesTags: ['Bulk'],
+    }),
     previewBulkCsv: b.mutation({
       query: ({ uid, file }) => ({
         url: `/users/${uid}/bulk-calls/preview`,
@@ -178,4 +198,7 @@ export const {
   useSetNextActionDoneMutation,
   useGetScreenTimeQuery,
   usePreviewBulkCsvMutation,
+  useStartBulkCallMutation,
+  useGetBulkCallQuery,
+  useControlBulkCallMutation,
 } = api

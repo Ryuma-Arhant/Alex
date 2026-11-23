@@ -44,7 +44,7 @@ async def user_out(s: AsyncSession, user: User) -> UserOut:
 
 @router.get("/config", response_model=AuthConfigOut)
 async def auth_config(settings: Settings = Depends(get_settings)) -> AuthConfigOut:
-    return AuthConfigOut(google=settings.google_enabled)
+    return AuthConfigOut(google=settings.google_enabled, phone_calls=settings.phone_calls_enabled)
 
 
 @router.post("/register", response_model=UserOut, status_code=201)

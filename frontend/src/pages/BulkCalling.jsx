@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { errorMessage, usePreviewBulkCsvMutation } from '../api/api'
 import { useAppDispatch, useAppSelector } from '../app/hooks'
+import { forgetCsvFiles, rememberCsvFile } from '../features/bulk/files'
 import { csvCleared, csvUploaded, selectCsvFiles } from '../features/bulk/slice'
 import { formatAmount } from '../lib/money'
 
@@ -167,13 +168,16 @@ export default function BulkCalling() {
         if (problem) return setError(problem)
         try {
             const result = await upload({ uid: me.uid, file }).unwrap()
-            dispatch(csvUploaded({ fileName: file.name, uploadedAt: new Date().toISOString(), result }))
+            const uploadedAt = new Date().toISOString()
+            rememberCsvFile(uploadedAt, file) // the bytes a bulk call will send
+            dispatch(csvUploaded({ fileName: file.name, uploadedAt, result }))
         } catch (err) {
             setError(errorMessage(err, 'Could not read the file.'))
         }
     }
     const clear = () => {
         dispatch(csvCleared())
+        forgetCsvFiles()
         setError(null)
     }
 

@@ -1,4 +1,5 @@
 from app.db.models.accounts import Agent, CallLink, NextActionDone, ScreenTimeDaily, User
+from app.db.models.bulk import BulkJob, BulkJobItem
 from app.db.models.core import (
     AgentProfile,
     AgentProfileVersion,
@@ -14,6 +15,8 @@ __all__ = [
     "AgentProfile",
     "AgentProfileVersion",
     "AuditEvent",
+    "BulkJob",
+    "BulkJobItem",
     "Call",
     "CallLink",
     "CallSummary",

@@ -6,6 +6,8 @@ export const initialState = {
   currentCallId: null,
   error: null,
   connectedAt: null, // ms timestamp of the first 'connected' of this call (the Live timer counts from it)
+  mode: 'web', // web: the user talks to the agent here | phone: the agent calls the borrower's phone
+  phoneStatus: null, // phone calls: dialing | ringing | active | hangup (LiveKit's sip.callStatus)
 }
 export const callSlice = createSlice({
   name: 'call',
@@ -16,6 +18,12 @@ export const callSlice = createSlice({
       status: 'connecting',
       currentCallId: a.payload,
     }),
+    callModeChanged: (s, a) => {
+      s.mode = a.payload
+    },
+    phoneStatusChanged: (s, a) => {
+      s.phoneStatus = a.payload
+    },
     statusChanged: {
       reducer: (s, a) => {
         s.status = a.payload
@@ -42,6 +50,8 @@ export const callSlice = createSlice({
   },
 })
 export const {
+  callModeChanged,
+  phoneStatusChanged,
   callStarting,
   statusChanged,
   agentStateChanged,

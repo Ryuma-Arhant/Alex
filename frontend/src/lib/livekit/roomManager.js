@@ -8,6 +8,7 @@ export const ATTR = {
   trackId: 'lk.transcribed_track_id',
   final: 'lk.transcription_final',
   agentState: 'lk.agent.state',
+  sipCallStatus: 'sip.callStatus', // set by LiveKit on a phone (SIP) participant: dialing | ringing | active | hangup
 }
 // Agent startup (process spawn + LiveKit connect) can take 10-15s; be generous before declaring failure.
 export const AGENT_JOIN_TIMEOUT_MS = 45_000
@@ -16,8 +17,12 @@ export function isNormalDisconnect(reason) {
   return reason === DisconnectReason.ROOM_DELETED || reason === DisconnectReason.CLIENT_INITIATED
 }
 export const AGENT_LEFT_GRACE_MS = 1500
-export function classifySpeaker(trackId, localMicSid) {
-  return trackId && localMicSid && trackId === localMicSid ? 'user' : 'agent'
+/** Whose words a transcript segment is: the user's (this browser's microphone, or the borrower on the phone) or the
+ * agent's. `userTrackSids` are the borrower's phone tracks on a phone call. */
+export function classifySpeaker(trackId, localMicSid, userTrackSids = []) {
+  if (!trackId) return 'agent'
+  if (localMicSid && trackId === localMicSid) return 'user'
+  return userTrackSids.includes(trackId) ? 'user' : 'agent'
 }
 export class CallRoomManager {
   room = null
@@ -29,7 +34,8 @@ export class CallRoomManager {
   getLevels() {
     return { user: this.userMeter?.getLevel() ?? 0, agent: this.agentMeter?.getLevel() ?? 0 }
   }
-  async connect(url, token, cb) {
+  /** `listenOnly`: a phone call the user follows from the browser (no microphone; the agent talks to the borrower). */
+  async connect(url, token, cb, { listenOnly = false } = {}) {
     this.intentionalClose = false
     const room = new Room({ adaptiveStream: true, dynacast: true })
     this.room = room
@@ -38,24 +44,35 @@ export class CallRoomManager {
       else if (st === ConnectionState.Connected)
         cb.onStatus(this.hasAgent() ? 'connected' : 'waiting_for_agent')
     })
+    const phoneStatus = (p) => {
+      if (p.kind === ParticipantKind.SIP && p.attributes[ATTR.sipCallStatus])
+        cb.onPhoneStatus?.(p.attributes[ATTR.sipCallStatus])
+    }
     room.on(RoomEvent.ParticipantConnected, (p) => {
       if (p.kind === ParticipantKind.AGENT) this.agentJoined(cb)
+      phoneStatus(p)
     })
     room.on(RoomEvent.ParticipantAttributesChanged, (_changed, p) => {
       if (p.kind === ParticipantKind.AGENT && p.attributes[ATTR.agentState]) {
         cb.onAgentState(p.attributes[ATTR.agentState])
       }
+      phoneStatus(p)
     })
     room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
-      if (track.kind === Track.Kind.Audio && participant.kind === ParticipantKind.AGENT) {
+      const agent = participant.kind === ParticipantKind.AGENT
+      if (track.kind !== Track.Kind.Audio || !(agent || participant.kind === ParticipantKind.SIP)) return
+      if (agent) {
         this.agentMeter?.close()
         this.agentMeter = createLevelMeter(track.mediaStreamTrack)
-        // livekit-client does not play remote audio by itself: attach to a hidden <audio> element.
-        const el = track.attach()
-        el.style.display = 'none'
-        document.body.appendChild(el)
-        this.audioEls.add(el)
+      } else {
+        this.userMeter?.close() // on a phone call the borrower is the "user" side of the sphere
+        this.userMeter = createLevelMeter(track.mediaStreamTrack)
       }
+      // livekit-client does not play remote audio by itself: attach to a hidden <audio> element.
+      const el = track.attach()
+      el.style.display = 'none'
+      document.body.appendChild(el)
+      this.audioEls.add(el)
     })
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
       track.detach().forEach((el) => {
@@ -71,6 +88,7 @@ export class CallRoomManager {
       cb.onError('Microphone problem. Check permissions and devices.'),
     )
     room.on(RoomEvent.ParticipantDisconnected, (p) => {
+      if (p.kind === ParticipantKind.SIP) cb.onPhoneStatus?.('hangup')
       // The agent hung up. The server normally closes the room too; this is the fallback so the
       // browser never stays "connected" to an empty call.
       if (p.kind !== ParticipantKind.AGENT) return
@@ -86,7 +104,7 @@ export class CallRoomManager {
     room.registerTextStreamHandler(TRANSCRIPTION_TOPIC, async (reader) => {
       const attrs = reader.info.attributes ?? {}
       const id = attrs[ATTR.segmentId] ?? reader.info.id
-      const speaker = classifySpeaker(attrs[ATTR.trackId], this.localMicSid())
+      const speaker = classifySpeaker(attrs[ATTR.trackId], this.localMicSid(), this.phoneTrackSids())
       const flagged = attrs[ATTR.final] === 'true'
       let acc = ''
       for await (const delta of reader) {
@@ -99,15 +117,18 @@ export class CallRoomManager {
     cb.onStatus('connecting')
     await room.connect(url, token)
     await room.startAudio().catch(() => undefined) // within the user's click gesture: unlock playback
-    try {
-      await room.localParticipant.setMicrophoneEnabled(true)
-    } catch {
-      cb.onError('Microphone access was denied. Allow the microphone and try again.')
-      await this.disconnect()
-      return
+    if (!listenOnly) {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true)
+      } catch {
+        cb.onError('Microphone access was denied. Allow the microphone and try again.')
+        await this.disconnect()
+        return
+      }
+      const mic = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track
+      if (mic) this.userMeter = createLevelMeter(mic.mediaStreamTrack)
     }
-    const mic = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track
-    if (mic) this.userMeter = createLevelMeter(mic.mediaStreamTrack)
+    for (const p of room.remoteParticipants.values()) phoneStatus(p) // the phone may already be ringing
     if (this.hasAgent()) this.agentJoined(cb)
     else {
       cb.onStatus('waiting_for_agent')
@@ -128,6 +149,12 @@ export class CallRoomManager {
     return (
       !!this.room && [...this.room.remoteParticipants.values()].some((p) => p.kind === ParticipantKind.AGENT)
     )
+  }
+  phoneTrackSids() {
+    if (!this.room) return []
+    return [...this.room.remoteParticipants.values()]
+      .filter((p) => p.kind === ParticipantKind.SIP)
+      .flatMap((p) => [...p.trackPublications.values()].map((t) => t.trackSid))
   }
   localMicSid() {
     return this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.trackSid

@@ -45,6 +45,8 @@ class Call(Base, IdMixin, CreatedMixin):
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(nullable=True)
     end_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # Phone calls only: the number the agent dials (E.164). Needed until the call ends, then cleared.
+    dial_to: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
 
 class CallTurn(Base, IdMixin, CreatedMixin):

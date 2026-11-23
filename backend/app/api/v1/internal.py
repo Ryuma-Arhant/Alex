@@ -16,9 +16,11 @@ router = APIRouter(prefix="/internal", tags=["internal"], dependencies=[Depends(
 
 
 @router.get("/calls/{call_id}/context")
-async def call_context(call_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def call_context(
+    call_id: uuid.UUID, session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_settings)
+) -> dict[str, Any]:
     call = await call_service.get_call_any(session, call_id)
-    return await call_service.runtime_context(session, call)
+    return await call_service.runtime_context(session, call, settings)
 
 
 @router.post("/calls/{call_id}/turns")

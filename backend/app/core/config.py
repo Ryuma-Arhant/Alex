@@ -49,8 +49,18 @@ class Settings(BaseSettings):
     rate_limit_public: str = "30/minute"
 
     feature_outbound_panel: bool = False
+
+    # Phone calls: LiveKit dials out through a Twilio Elastic SIP trunk. Switched off until SIP_OUTBOUND_TRUNK_ID (the
+    # LiveKit outbound trunk, "ST_...") is set; `python -m app.scripts.setup_phone_calls` creates the trunk.
+    sip_outbound_trunk_id: str = ""
+    sip_ringing_timeout_seconds: int = Field(default=40, ge=10, le=120)
+    bulk_call_interval_seconds: float = Field(default=5.0, gt=0)  # how often the bulk queue looks for the next call
     summary_webhook_url: str = ""
     summary_webhook_secret: str = ""
+
+    @property
+    def phone_calls_enabled(self) -> bool:
+        return bool(self.sip_outbound_trunk_id.strip())
 
     @property
     def google_enabled(self) -> bool:

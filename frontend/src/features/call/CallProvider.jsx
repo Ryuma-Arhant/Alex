@@ -3,7 +3,16 @@ import { useAppDispatch } from '../../app/hooks'
 import { useCreateAgentCallMutation, useEndCallMutation } from '../../api/api'
 import { CallRoomManager } from '../../lib/livekit/roomManager'
 import { segmentUpserted, transcriptCleared } from '../transcript/slice'
-import { agentStateChanged, callEnded, callFailed, callStarting, muteChanged, statusChanged } from './slice'
+import {
+    agentStateChanged,
+    callEnded,
+    callFailed,
+    callModeChanged,
+    callStarting,
+    muteChanged,
+    phoneStatusChanged,
+    statusChanged,
+} from './slice'
 const Ctx = createContext(null)
 
 /**
@@ -48,14 +57,22 @@ export function CallProvider({ children, uid }) {
             setClient(details)
             dispatch(transcriptCleared())
             dispatch(callStarting(r.call_id))
+            const phone = r.mode === 'phone'
+            dispatch(callModeChanged(phone ? 'phone' : 'web'))
             void manager
-                .connect(r.livekit_url, r.token, {
-                    onStatus: (s) => dispatch(statusChanged(s)),
-                    onAgentState: (s) => dispatch(agentStateChanged(s)),
-                    onSegment: (u) => dispatch(segmentUpserted(u)),
-                    onError: (m) => dispatch(callFailed(m)),
-                    onDisconnected: finish,
-                })
+                .connect(
+                    r.livekit_url,
+                    r.token,
+                    {
+                        onStatus: (s) => dispatch(statusChanged(s)),
+                        onAgentState: (s) => dispatch(agentStateChanged(s)),
+                        onSegment: (u) => dispatch(segmentUpserted(u)),
+                        onPhoneStatus: (s) => dispatch(phoneStatusChanged(s)),
+                        onError: (m) => dispatch(callFailed(m)),
+                        onDisconnected: finish,
+                    },
+                    { listenOnly: phone }, // a phone call is followed here, not spoken into
+                )
                 .catch(() => {
                     dispatch(callFailed('Could not connect the call. Please try again.'))
                     finish()

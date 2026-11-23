@@ -10,6 +10,7 @@ import { useCall } from '../features/call/CallProvider'
 import { selectEntries } from '../features/transcript/slice'
 import { formatAmount } from '../lib/money'
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion'
+import { NOT_CONNECTED } from '../lib/callOutcome'
 
 const SUMMARY_POLL_MS = 2500 // the agent writes the summary a few seconds after the call ends
 
@@ -25,7 +26,7 @@ const maskPhone = (phone) => {
  */
 export default function CallPage() {
     const { me } = useOutletContext()
-    const { status, agentState, currentCallId } = useAppSelector((s) => s.call)
+    const { status, agentState, currentCallId, mode } = useAppSelector((s) => s.call)
     const entries = useAppSelector(selectEntries)
     const { manager, client } = useCall()
     const reduced = usePrefersReducedMotion()
@@ -56,11 +57,16 @@ export default function CallPage() {
         <div className={`call-layout ${ended ? 'with-summary' : ''}`}>
             <section className="call-main">
                 <header className="call-head">
-                    <h1 className="call-title">Individual call</h1>
+                    <h1 className="call-title">{mode === 'phone' ? 'Phone call' : 'Individual call'}</h1>
                     <p className="muted call-client">
                         <span className="mono">{maskPhone(client.phone)}</span> · Pending{' '}
                         {formatAmount(client.amount, client.currency)}
                     </p>
+                    {ended && NOT_CONNECTED[call?.end_reason] && (
+                        <p className="banner notice" role="status">
+                            The call did not connect: {NOT_CONNECTED[call.end_reason]}.
+                        </p>
+                    )}
                 </header>
                 <Sphere
                     mode={sphereMode(status, agentState)}

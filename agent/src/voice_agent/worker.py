@@ -21,6 +21,7 @@ from voice_agent.profile.schema import AgentProfileSpec
 from voice_agent.providers.noise import noise_selector
 from voice_agent.providers.vad import load_vad
 from voice_agent.session_factory import build_agent, build_session, speak
+from voice_agent.telephony import dial_borrower
 from voice_agent.tools.base import CallState, ToolContext
 from voice_agent.tools.registry import build_tools
 
@@ -156,14 +157,36 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.add_shutdown_callback(_on_shutdown)
 
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(noise_cancellation=noise_selector(settings)),
-            close_on_disconnect=True,
-        ),
+    phone: str | None = None
+    dial = context.get("dial")
+    if dial:  # a real phone call: ring the borrower first; the session starts only once they have answered
+        step("dialing")
+        result = await dial_borrower(ctx.api, room=ctx.room.name, call_id=call_id, dial=dial)
+        if not result.answered:
+            state.end_reason = result.reason
+            try:
+                payload = {"reason": result.reason, "sip_status_code": result.sip_status_code}
+                await backend.post_event(call_id, "dial_failed", payload)
+            except Exception:
+                log.exception("dial_failed event failed")
+            closed.set()  # no session ran, so the shutdown hook need not wait for one to close
+            ctx.delete_room()  # also disconnects the user's browser, if it was following the call
+            ctx.shutdown(reason=result.reason or "dial_failed")
+            return
+        phone = result.identity
+        step("answered")
+        try:
+            await backend.post_event(call_id, "answered")
+        except Exception:
+            log.exception("answered event failed")
+
+    room_options = room_io.RoomOptions(
+        audio_input=room_io.AudioInputOptions(noise_cancellation=noise_selector(settings)),
+        close_on_disconnect=True,
     )
+    if phone:  # listen to the borrower on the phone only, never to a browser following the call
+        room_options.participant_identity = phone
+    await session.start(agent=agent, room=ctx.room, room_options=room_options)
     step("session_started")
     try:
         await backend.post_event(call_id, "agent_joined")

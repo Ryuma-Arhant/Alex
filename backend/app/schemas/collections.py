@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -17,6 +18,7 @@ class SoloCallIn(BaseModel):
     currency: str = Field(default="INR", pattern="^[A-Z]{3}$")
     due_date: date | None = None
     context: str = Field(default="", max_length=NOTES_MAX)
+    mode: Literal["web", "phone"] = "web"  # phone: the agent dials the borrower's real number
 
     @field_validator("borrower_name", "bank")
     @classmethod

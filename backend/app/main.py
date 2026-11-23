@@ -45,16 +45,23 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        task = None
+        tasks: list[asyncio.Task[None]] = []
         if settings.env != "test" and settings.gemini_api_key:
             from app.api.v1.agent_profiles import get_generator
             from app.db.session import get_sessionmaker
             from app.workers.sweeper import run_forever
 
-            task = asyncio.create_task(run_forever(get_sessionmaker(), get_generator(), settings.gemini_text_model))
+            tasks.append(
+                asyncio.create_task(run_forever(get_sessionmaker(), get_generator(), settings.gemini_text_model))
+            )
+        if settings.env != "test" and settings.phone_calls_enabled:  # the bulk calling queue
+            from app.db.session import get_sessionmaker
+            from app.services import bulk_jobs_service
+
+            tasks.append(asyncio.create_task(bulk_jobs_service.run_forever(get_sessionmaker(), settings)))
         yield
-        if task:
-            task.cancel()
+        for t in tasks:
+            t.cancel()
 
     app = FastAPI(title="Voice Agent Platform API", version="0.1.0", lifespan=lifespan)
 

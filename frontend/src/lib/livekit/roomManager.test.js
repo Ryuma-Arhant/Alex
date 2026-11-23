@@ -21,3 +21,10 @@ it('treats a server-closed room and a client hang-up as normal ends, but not a d
   expect(isNormalDisconnect(DisconnectReason.JOIN_FAILURE)).toBe(false)
   expect(isNormalDisconnect(undefined)).toBe(false)
 })
+
+it('labels the borrower on the phone as the user, everything else as the agent', () => {
+  expect(classifySpeaker('TR_mic', 'TR_mic')).toBe('user') // browser call: this microphone
+  expect(classifySpeaker('TR_phone', undefined, ['TR_phone'])).toBe('user') // phone call: the borrower
+  expect(classifySpeaker('TR_agent', undefined, ['TR_phone'])).toBe('agent')
+  expect(classifySpeaker(undefined, 'TR_mic', ['TR_phone'])).toBe('agent')
+})

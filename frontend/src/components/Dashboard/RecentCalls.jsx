@@ -1,3 +1,4 @@
+import { NOT_CONNECTED } from '../../lib/callOutcome'
 import Pill from './Pill'
 
 // call_outcome values the summariser uses (contracts/summary_prompt.txt) -> what the table shows.
@@ -14,6 +15,11 @@ const OUTCOMES = {
  * generic outcome, so they come first. */
 export function outcomeOf(call) {
     if (call.status === 'live') return { label: 'Live', tone: 'teal' }
+    if (NOT_CONNECTED[call.end_reason]) {
+        const tone =
+            call.end_reason === 'busy' ? 'amber' : call.end_reason === 'invalid_number' ? 'red' : 'neutral'
+        return { label: NOT_CONNECTED[call.end_reason], tone }
+    }
     if (call.status === 'summarising') return { label: 'Summarising…', tone: 'neutral' }
     if (call.promise_to_pay) return { label: 'Promise to pay', tone: 'teal', icon: 'check' }
     if (call.escalation_needed) return OUTCOMES.escalated
