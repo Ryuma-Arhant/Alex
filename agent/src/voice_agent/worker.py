@@ -249,20 +249,28 @@ async def _cancel(task: "asyncio.Task[None]") -> None:
     task.cancel()
 
 
+# Consecutive failed attempts to reach LiveKit before the worker gives up. Once backed off they are 10s apart,
+# so this is about a day. The framework's 16 (about 2.5 minutes) let a short internet outage shut the agent down.
+MAX_RECONNECT_ATTEMPTS = 8640
+
+
+def worker_options() -> WorkerOptions:
+    return WorkerOptions(
+        entrypoint_fnc=entrypoint,
+        prewarm_fnc=prewarm,
+        agent_name=os.environ.get("AGENT_NAME", "voice-agent"),
+        shutdown_process_timeout=60.0,  # summary generation must fit (default 10s is too short)
+        num_idle_processes=idle_processes(),
+        max_retry=MAX_RECONNECT_ATTEMPTS,
+    )
+
+
 def main() -> None:
     # The framework reads LIVEKIT_* from os.environ; export .env there (real env vars still win).
     load_dotenv(find_dotenv(usecwd=True), override=False)
     # LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET are read from the environment by the framework,
     # so `download-files` works at image build time without secrets.
-    cli.run_app(
-        WorkerOptions(
-            entrypoint_fnc=entrypoint,
-            prewarm_fnc=prewarm,
-            agent_name=os.environ.get("AGENT_NAME", "voice-agent"),
-            shutdown_process_timeout=60.0,  # summary generation must fit (default 10s is too short)
-            num_idle_processes=idle_processes(),
-        )
-    )
+    cli.run_app(worker_options())
 
 
 if __name__ == "__main__":

@@ -94,3 +94,11 @@ async def test_a_failure_loading_the_call_is_not_swallowed(session):
 
     with pytest.raises(RuntimeError, match="backend down"):
         await worker.open_call(SimpleNamespace(connect=connect), FakeBackend(fail=True), "c1", get_settings(), vad=None)
+
+
+def test_agent_keeps_reconnecting_through_an_internet_outage():
+    """The framework gives up after 16 tries (about 2.5 minutes): a Wi-Fi drop on 26 Nov left the agent shut down, and
+    calls unanswered, until someone restarted it by hand."""
+    opts = worker.worker_options()
+    assert opts.max_retry * 10 >= 12 * 3600  # retries are 10s apart once backed off: keeps trying for 12h or more
+    assert opts.entrypoint_fnc is worker.entrypoint and opts.prewarm_fnc is worker.prewarm
